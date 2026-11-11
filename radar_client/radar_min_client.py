@@ -212,7 +212,7 @@ class ClientConfig:
     dump_entries: int = 3
     send_motor_start: bool = False
     motor_start_subid: int = 1
-    motor_run_rpm: int = 1600      # rotor speed setpoint sent over CAN while running
+    motor_run_rpm: int = 1200      # rotor speed setpoint sent over CAN while running
     motor_stop_rpm: int = 50       # rotor speed setpoint sent at shutdown (idle)
     motor_speed_hz: float = 5.0    # how often the running setpoint is re-sent
     send_sample_start: bool = False
@@ -2834,9 +2834,9 @@ def parse_args() -> ClientConfig:
     parser.add_argument("--dump-entries", type=int, default=3)
     parser.add_argument("--send-motor-start", action="store_true")
     parser.add_argument("--motor-start-subid", type=lambda v: int(v, 0), default=1)
-    parser.add_argument("--motor-run-rpm", type=int, default=1600,
+    parser.add_argument("--motor-run-rpm", type=int, default=1200,
                         help="Rotor speed setpoint (rpm) sent over CAN while "
-                             "running (default 1600).")
+                             "running (default 1200).")
     parser.add_argument("--motor-stop-rpm", type=int, default=50,
                         help="Rotor speed setpoint (rpm) sent at shutdown "
                              "(idle; default 50).")
