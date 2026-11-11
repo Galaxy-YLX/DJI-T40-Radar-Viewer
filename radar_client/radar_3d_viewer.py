@@ -680,13 +680,14 @@ class PointCloud3D:
         ax = self.ax
         ax.set_facecolor('black')
         for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+            # Hide the 3D background box (panes + wireframe edges).
             try:
-                axis.set_pane_color((0.0, 0.0, 0.0, 1.0))
+                axis.set_pane_color((0.0, 0.0, 0.0, 0.0))
             except Exception:
                 pass
             try:
-                axis.pane.set_facecolor((0.0, 0.0, 0.0, 1.0))
-                axis.pane.set_edgecolor('#24442f')
+                axis.pane.set_facecolor((0.0, 0.0, 0.0, 0.0))
+                axis.pane.set_edgecolor('none')
             except Exception:
                 pass
         ax.tick_params(colors='#9fb8a6', labelsize=8)
