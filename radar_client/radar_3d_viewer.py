@@ -113,6 +113,9 @@ def build_parser():
                    help='Suppress the per-frame status line')
     p.add_argument('--dump', action='store_true',
                    help='Print one frame of raw point-cloud stats and exit')
+    p.add_argument('--demo', action='store_true',
+                   help='Render a synthetic green point cloud without any '
+                        'radar hardware (verifies the display path)')
     return p
 
 
@@ -284,16 +287,76 @@ def make_side_reader(args):
     return rv.UDPStreamReader(host, rv.SIDE_PORT, rv.SIDE_FRAME_SIZE)
 
 
+def project_ignoring_active(fr, args):
+    """Fallback projection when sectors carry points but their 'active'
+    byte is 0. Some firmware builds leave that flag unset even though
+    count/points are valid; compute_body_xyz() would silently skip all
+    of them and the point cloud stays empty. Same math, no flag check.
+    """
+    offset = np.radians(args.azimuth_offset)
+    out = []
+    for sec in fr.sectors:
+        if sec['count'] == 0:
+            continue
+        az = -np.deg2rad(sec['idx'] * rv.SIDE_DEG_PER_SECTOR) + offset
+        cos_az, sin_az = np.cos(az), np.sin(az)
+        for p in sec['points']:
+            r = p['range_m']
+            if not np.isfinite(r) or r < 0.1 or r > 120.0 or r < args.min_range:
+                continue
+            if p['snr'] < args.min_snr:
+                continue
+            el = p['el_rad']
+            if not np.isfinite(el) or abs(el) > np.pi:
+                el = 0.0
+            cos_el, sin_el = np.cos(el), np.sin(el)
+            out.append({'x': cos_el * r * cos_az,
+                        'y': cos_el * r * sin_az,
+                        'z': sin_el * r,
+                        'r': r, 'sector': sec['idx'], 'snr': p['snr']})
+    return out
+
+
+def demo_frame(n):
+    from types import SimpleNamespace
+    return SimpleNamespace(frame_token=n, sectors_decoded=rv.SIDE_N_SECTORS,
+                           rot_angle_a=n % rv.SIDE_N_SECTORS,
+                           rot_angle_b=0, rot_angle_c=0,
+                           cfar_error=0, point_count_total=0)
+
+
+def demo_points(n, count=320):
+    phase = n * 0.02
+    pts = []
+    for i in range(count):
+        az = 2 * np.pi * i / count + phase
+        r = 9.0 + 2.5 * np.sin(3 * az + phase)
+        x, y = r * np.cos(az), r * np.sin(az)
+        z = 1.2 * np.sin(5 * az + phase) + 0.15 * np.sin(i * 1.7)
+        pts.append({'x': x, 'y': y, 'z': z, 'r': float(np.hypot(x, y)),
+                    'sector': i % rv.SIDE_N_SECTORS,
+                    'snr': 60.0 + 90.0 * abs(np.sin(2 * az))})
+    return pts
+
+
 def decode_frame(raw, args, persistence):
     fr = rv.SideFrame(raw)
     pts = fr.compute_body_xyz(azimuth_offset_deg=args.azimuth_offset,
                               min_snr=args.min_snr,
                               min_range_m=args.min_range)
+    sector_pts = fr.all_valid_sector_points()
+    fallback = False
+    if not pts and sector_pts:
+        pts = project_ignoring_active(fr, args)
+        fallback = bool(pts)
     if args.persist_min_hits > 0:
         pts, hits = persistence.update_and_filter(pts)
     else:
         hits = []
-    return fr, pts, hits
+    diag = {'sector_pts': len(sector_pts), 'fallback': fallback,
+            'active': sum(1 for s in fr.sectors
+                          if s['active'] and s['count'])}
+    return fr, pts, hits, diag
 
 
 # ─── Raw point output ───────────────────────────────────────────────────
@@ -355,14 +418,27 @@ class PointExporter:
             self.fp.close()
 
 
-def emit_frame(args, exporter, fr, pts, frame_no, fps):
+def emit_frame(args, exporter, fr, pts, frame_no, fps, diag=None):
     if not args.quiet:
         kind = 'raw' if args.persist_min_hits == 0 else 'filtered'
+        extra = ''
+        if diag:
+            extra = (f" active_sec={diag['active']} "
+                     f"sector_pts={diag['sector_pts']}")
+            if diag['fallback']:
+                extra += ' [fallback]'
+        if pts:
+            xs = np.array([p['x'] for p in pts])
+            ys = np.array([p['y'] for p in pts])
+            zs = np.array([p['z'] for p in pts])
+            extra += (f" bbox=x[{xs.min():.0f},{xs.max():.0f}] "
+                      f"y[{ys.min():.0f},{ys.max():.0f}] "
+                      f"z[{zs.min():.0f},{zs.max():.0f}]")
         print(f"[f{frame_no:05d}] token={fr.frame_token} "
               f"sectors={fr.sectors_decoded} "
               f"rot={fr.rot_angle_a}/{fr.rot_angle_b}/{fr.rot_angle_c} "
               f"{kind}_pts={len(pts)} cfar_error={fr.cfar_error} "
-              f"fps={fps:.1f}", flush=True)
+              f"fps={fps:.1f}{extra}", flush=True)
     if args.print_points:
         for p in pts[:args.print_points]:
             print(f"    sector={p['sector']:3d} x={p['x']:7.2f} "
@@ -383,12 +459,13 @@ def dump_once(reader, args, persistence, exporter):
     if raw is None:
         print("no SIDE frame within 8s — is the streamer running?")
         return
-    fr, pts, _ = decode_frame(raw, args, persistence)
+    fr, pts, _, diag = decode_frame(raw, args, persistence)
     print("=== RAW 3D point cloud (one SIDE frame) ===")
-    emit_frame(args, exporter, fr, pts, 1, 0.0)
+    emit_frame(args, exporter, fr, pts, 1, 0.0, diag=diag)
     if not pts:
-        print("no points — radar may not be in working state yet "
-              "(FC client + CAN bridge are required)")
+        print(f"no points — active_sec={diag['active']} "
+              f"sector_pts={diag['sector_pts']}; if sector_pts > 0 the "
+              f"fallback projection should have produced points")
         return
     for axis in ('x', 'y', 'z', 'r'):
         vals = np.array([p[axis] for p in pts])
@@ -482,8 +559,11 @@ class PointCloud3D:
                 pass
         self.stats = self.fig.text(0.02, 0.02, '', fontsize=9,
                                    family='monospace', color='#8effb0')
+        self.warning = self.ax.text2D(0.5, 0.5, '', transform=self.ax.transAxes,
+                                      ha='center', va='center', fontsize=14,
+                                      color=GREEN, alpha=0.9)
 
-    def update(self, fr, pts, hits, frames, fps, error=None):
+    def update(self, fr, pts, hits, frames, fps, error=None, diag=None):
         args = self.args
         if pts:
             xs = np.array([p['x'] for p in pts], dtype=float)
@@ -499,24 +579,33 @@ class PointCloud3D:
             xs = ys = zs = sizes = np.array([])
             vals = np.array([]) if self.use_cmap else None
 
-        try:
-            self.sc._offsets3d = (xs, ys, zs)
-            self.sc.set_sizes(sizes)
-            if self.use_cmap and vals is not None:
+        if not self.use_cmap:
+            # Rebuild the collection every frame. Updating the private
+            # _offsets3d attribute does not reliably refresh the 3D
+            # projection in a live QtAgg animation.
+            try:
+                self.sc.remove()
+            except Exception:
+                pass
+            self.sc = self.ax.scatter(xs, ys, zs, c=GREEN, s=sizes,
+                                      depthshade=False, alpha=0.9,
+                                      edgecolors='none')
+        else:
+            try:
+                self.sc._offsets3d = (xs, ys, zs)
+                self.sc.set_sizes(sizes)
                 self.sc.set_array(vals)
-        except Exception:
-            self.sc.remove()
-            kwargs = dict(s=sizes, depthshade=False, alpha=0.9,
-                          edgecolors='none')
-            if self.use_cmap:
-                kwargs.update(c=vals, cmap=self.cmap, norm=self.norm)
-            else:
-                kwargs['c'] = GREEN
-            self.sc = self.ax.scatter(xs, ys, zs, **kwargs)
+            except Exception:
+                self.sc.remove()
+                self.sc = self.ax.scatter(xs, ys, zs, c=vals, s=sizes,
+                                          cmap=self.cmap, norm=self.norm,
+                                          depthshade=False, alpha=0.9,
+                                          edgecolors='none')
 
         if fr is None:
             head = "waiting for SIDE frames (UDP 9877) ..."
             body = ""
+            self.warning.set_text('WAITING FOR SIDE FRAMES (UDP 9877)')
         else:
             head = (f"token={fr.frame_token}  sectors={fr.sectors_decoded}  "
                     f"rot_angle={fr.rot_angle_a}/{fr.rot_angle_b}/"
@@ -525,16 +614,69 @@ class PointCloud3D:
             body = (f"raw_pts={len(pts):4d}  frames={frames}  fps={fps:4.1f}  "
                     f"filter={'off (RAW)' if args.persist_min_hits == 0 else 'on'}  "
                     f"color={colour_tag}")
-            if fr.sectors_decoded == 0 and not pts:
-                body += "\n(no points: radar not in working state yet)"
+            if diag:
+                body += (f"  active_sec={diag['active']} "
+                         f"sector_pts={diag['sector_pts']}"
+                         + ('  [fallback]' if diag['fallback'] else ''))
+            if not pts:
+                if diag and diag['sector_pts'] > 0:
+                    hint = 'sector points present, projection produced none'
+                else:
+                    hint = ('no sector data: check FC client / CAN bridge / '
+                            '900 rpm / streamer')
+                self.warning.set_text('NO POINTS\n' + hint)
+            else:
+                R, Z = args.range_m, args.z_range
+                inside = int(((np.abs(xs) <= R) & (np.abs(ys) <= R) &
+                              (np.abs(zs) <= Z)).sum())
+                if inside == 0:
+                    self.warning.set_text(
+                        f'ALL {len(pts)} POINTS OUTSIDE VIEW\n'
+                        f'raise --range (now {R}m) / --z-range (now {Z}m)')
+                else:
+                    self.warning.set_text('')
         if error:
             body += f"\n[err] {error}"
+            self.warning.set_text('ERROR\n' + str(error))
         self.stats.set_text(head + "\n" + body)
-        return (self.sc, self.stats)
+        return (self.sc, self.stats, self.warning)
 
 
 # ─── Main ───────────────────────────────────────────────────────────────
+def run_demo(args):
+    """Synthetic point cloud: verifies the whole display/output path."""
+    print("[demo] synthetic green point cloud — no radar hardware needed")
+    exporter = PointExporter(args.export) if args.export else None
+    try:
+        if args.dump:
+            fr, pts = demo_frame(1), demo_points(1)
+            emit_frame(args, exporter, fr, pts, 1, 0.0)
+            print(f"demo points: {len(pts)}")
+            return
+        scene = PointCloud3D(args)
+        t0 = time.monotonic()
+        counter = [0]
+
+        def tick(_):
+            counter[0] += 1
+            n = counter[0]
+            fr, pts = demo_frame(n), demo_points(n)
+            fps = n / max(time.monotonic() - t0, 1e-6)
+            emit_frame(args, exporter, fr, pts, n, fps)
+            return scene.update(fr, pts, [], n, fps)
+
+        from matplotlib.animation import FuncAnimation
+        scene.ani = FuncAnimation(scene.fig, tick, interval=args.interval,
+                                  blit=False, cache_frame_data=False)
+        scene.plt.show()
+    finally:
+        if exporter:
+            exporter.close()
+
+
 def run(args):
+    if args.demo:
+        return run_demo(args)
     auto = args.udp is None and not args.deploy
     args.ssh = args.ssh or f"root@{args.radar_ip}"
     need_fc = (args.start_fc or auto) and not args.no_fc
@@ -565,26 +707,28 @@ def run(args):
             return
 
         scene = PointCloud3D(args)
-        state = {'fr': None, 'pts': [], 'hits': [], 'error': None,
-                 'frames': 0, 'fps': 0.0, 't0': time.monotonic()}
+        state = {'fr': None, 'pts': [], 'hits': [], 'diag': None,
+                 'error': None, 'frames': 0, 'fps': 0.0,
+                 't0': time.monotonic()}
 
         def tick(_):
             raw = reader.try_read_frame()
             if raw is not None:
                 try:
-                    fr, pts, hits = decode_frame(raw, args, persistence)
-                    state.update(fr=fr, pts=pts, hits=hits, error=None)
+                    fr, pts, hits, diag = decode_frame(raw, args, persistence)
+                    state.update(fr=fr, pts=pts, hits=hits, diag=diag,
+                                 error=None)
                     state['frames'] += 1
                     elapsed = time.monotonic() - state['t0']
                     state['fps'] = state['frames'] / elapsed if elapsed > 0 else 0.0
                     emit_frame(args, exporter, fr, pts,
-                               state['frames'], state['fps'])
+                               state['frames'], state['fps'], diag=diag)
                 except Exception as exc:
                     state['error'] = str(exc)
                     print(f"[err] frame decode failed: {exc}", flush=True)
             return scene.update(state['fr'], state['pts'], state['hits'],
                                 state['frames'], state['fps'],
-                                error=state['error'])
+                                error=state['error'], diag=state['diag'])
 
         from matplotlib.animation import FuncAnimation
         # Keep a reference: FuncAnimation is otherwise garbage-collected
