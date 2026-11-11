@@ -132,9 +132,11 @@ def build_parser():
     # works even when the omni snapshot is empty (e.g. bench units whose
     # encoder isn't driven into the FPGA).
     src = p.add_argument_group('point source')
-    src.add_argument('--source', choices=('side', 'v2'), default='side',
-                     help="Point source: 'side' = omni memory snapshot "
-                          "(default), 'v2' = DJI 1E61 UDP perception stream")
+    src.add_argument('--source', choices=('side', 'v2'), default='v2',
+                     help="Point source: 'v2' = DJI 1E61 UDP perception "
+                          "stream (default — works even when the omni memory "
+                          "snapshot is empty on bench units), 'side' = omni "
+                          "memory snapshot")
     src.add_argument('--local-ip', default=DEFAULT_HOST_IP,
                      help='Local host IP to bind for the V2 listener '
                           '(default 192.168.8.1)')
