@@ -496,6 +496,15 @@ void ath6kl_connect_ap_mode_sta(struct ath6kl_vif *vif, u16 aid, u8 *mac_addr,
 
 	cfg80211_new_sta(&vif->wdev, mac_addr, sinfo, GFP_KERNEL);
 
+	/* The firmware keeps a newly associated STA unauthorized until the
+	 * host issues an explicit AUTHORIZE. Newer hostapd/cfg80211 may not
+	 * pass NL80211_STA_FLAG_AUTHORIZED through change_station, so do it
+	 * here for open (non-WPA) APs.
+	 */
+	if (vif->auth_mode == NONE_AUTH)
+		ath6kl_wmi_ap_set_mlme(vif->ar->wmi, vif->fw_vif_idx,
+				       WMI_AP_MLME_AUTHORIZE, mac_addr, 0);
+
 	netif_wake_queue(vif->ndev);
 
 	kfree(sinfo);

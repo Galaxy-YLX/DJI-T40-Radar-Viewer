@@ -3019,11 +3019,14 @@ static int ath6kl_change_station(struct wiphy *wiphy, struct wireless_dev *wdev,
 	if (err)
 		return err;
 
+	/* Newer hostapd/cfg80211 clears AUTHORIZED during the association
+	 * handshake. The STA is authorized in ath6kl_connect_ap_mode_sta();
+	 * never pass a deauthorization through, or the firmware drops all
+	 * data frames for this STA. */
 	if (params->sta_flags_set & BIT(NL80211_STA_FLAG_AUTHORIZED))
 		return ath6kl_wmi_ap_set_mlme(ar->wmi, vif->fw_vif_idx,
 					      WMI_AP_MLME_AUTHORIZE, mac, 0);
-	return ath6kl_wmi_ap_set_mlme(ar->wmi, vif->fw_vif_idx,
-				      WMI_AP_MLME_UNAUTHORIZE, mac, 0);
+	return 0;
 }
 
 static int ath6kl_remain_on_channel(struct wiphy *wiphy,

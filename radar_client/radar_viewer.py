@@ -44,6 +44,47 @@ import numpy as np
 import paramiko
 
 
+def _enable_legacy_ssh_rsa():
+    """Accept the radar's dropbear 2014.63 host key (ssh-rsa / SHA-1).
+
+    paramiko >= 4 removed ssh-rsa from the preferred host-key algorithms,
+    the key-type lookup table and the RSA signature hash table. Restore
+    all three; modern algorithms remain preferred for other hosts.
+    """
+    from cryptography.hazmat.primitives import hashes
+    from paramiko import RSAKey, Transport
+
+    if "ssh-rsa" not in Transport._preferred_keys:
+        Transport._preferred_keys += ("ssh-rsa",)
+    Transport._key_info = dict(Transport._key_info)
+    Transport._key_info.setdefault("ssh-rsa", RSAKey)
+    RSAKey.HASHES = dict(RSAKey.HASHES)
+    RSAKey.HASHES.setdefault("ssh-rsa", hashes.SHA1)
+
+
+def _select_gui_backend():
+    """Pick the first interactive backend that can actually be imported.
+
+    TkAgg needs python3-tkinter, which is not always installed (Fedora),
+    so prefer Qt/GTK when available.
+    """
+    import importlib
+
+    for backend, module in (
+        ("QtAgg", "matplotlib.backends.backend_qtagg"),
+        ("Gtk4Agg", "matplotlib.backends.backend_gtk4agg"),
+        ("TkAgg", "matplotlib.backends.backend_tkagg"),
+    ):
+        try:
+            importlib.import_module(module)
+            return backend
+        except Exception:
+            continue
+    raise RuntimeError(
+        "no interactive matplotlib backend available; install PyQt6 or python3-tkinter"
+    )
+
+
 # ─── Constants ──────────────────────────────────────────────────────────
 DEFAULT_SSH_TARGET   = "root@192.168.8.2"
 DEFAULT_SSH_PORT     = 107
@@ -113,6 +154,7 @@ def _connect_ssh(host=None, port=None, username=None, password=None,
     port = port or DEFAULT_SSH_PORT
     password = password or DEFAULT_SSH_PASSWORD
 
+    _enable_legacy_ssh_rsa()
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client._host_keys.clear()
@@ -692,7 +734,7 @@ def run_both_viewer(top_reader: UDPStreamReader,
         └─────────────────────────────────────────────────────────┘
     """
     import matplotlib
-    matplotlib.use('TkAgg')
+    matplotlib.use(_select_gui_backend())
     import matplotlib.pyplot as plt
     from matplotlib.colors import LogNorm, Normalize
     from matplotlib.cm import ScalarMappable
