@@ -14,6 +14,13 @@ filter, no SNR/range filtering unless explicitly requested):
 Default look: bright green points on a black canvas. Use --color-by
 z / snr / sector to switch to a colour scale instead.
 
+Interactive controls (matplotlib window):
+    mouse wheel ............ zoom in / out (dolly along the view axis)
+    i / o .................. zoom in / out (keyboard fallback)
+    ] / + .................. larger points
+    [ / - .................. smaller points
+    drag ................... orbit the view (rotate)
+
 Examples:
     python3 radar_3d_viewer.py
     python3 radar_3d_viewer.py --export /tmp/raw_points.csv --print-points 5
@@ -24,6 +31,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import signal
 import socket
 import subprocess
 import sys
@@ -693,6 +702,13 @@ class PointCloud3D:
         ax.set_xlim(-R, R)
         ax.set_ylim(-R, R)
         ax.set_zlim(-Z, Z)
+        # We drive the visible volume ourselves (zoom); keep mplot3d from
+        # re-autoscaling the limits every time the scatter is re-added.
+        try:
+            ax.set_autoscale_on(False)
+        except Exception:
+            pass
+        self.zoom = 1.0           # 1.0 = full range; >1 zooms in
         ax.view_init(elev=28, azim=-60)
         raw_tag = 'RAW' if args.persist_min_hits == 0 else 'filtered'
         ax.set_title(f'DJI T40 — {raw_tag} 3D point cloud',
@@ -731,6 +747,35 @@ class PointCloud3D:
                                       color=GREEN, alpha=0.9)
         self.point_size = max(0.5, float(args.point_size))
         self.fig.canvas.mpl_connect('key_press_event', self._on_key)
+        self.fig.canvas.mpl_connect('scroll_event', self._on_scroll)
+
+    def _apply_zoom(self):
+        ax = self.ax
+        R = self.args.range_m / self.zoom
+        Z = self.args.z_range / self.zoom
+        ax.set_xlim(-R, R)
+        ax.set_ylim(-R, R)
+        ax.set_zlim(-Z, Z)
+        try:
+            self.fig.canvas.draw_idle()
+        except Exception:
+            pass
+
+    def _zoom(self, factor):
+        """Zoom: factor > 1 zooms in (smaller visible volume), < 1 zooms out."""
+        self.zoom = float(np.clip(self.zoom * factor, 0.2, 4.0))
+        self._apply_zoom()
+
+    def _on_scroll(self, event):
+        if getattr(event, 'inaxes', None) is not self.ax:
+            return
+        btn = event.button
+        if isinstance(btn, str):
+            zoom_in = (btn == 'up')
+        else:
+            # Some backends report scroll as an int (positive = up/in).
+            zoom_in = (btn is not None and btn > 0)
+        self._zoom(1.1 if zoom_in else 1.0 / 1.1)
 
     def _on_key(self, event):
         key = event.key or ''
@@ -738,11 +783,19 @@ class PointCloud3D:
             self.point_size *= 1.25
         elif key in ('[', '-'):
             self.point_size /= 1.25
+        elif key in ('i', 'I'):
+            self._zoom(1.1)
+        elif key in ('o', 'O'):
+            self._zoom(1.0 / 1.1)
         else:
             return
-        self.point_size = float(np.clip(self.point_size, 0.5, 200.0))
-        print(f"[view] point size = {self.point_size:.1f} "
-              f"(] larger, [ smaller)", flush=True)
+        if key in (']', '+', '=', '[', '-'):
+            self.point_size = float(np.clip(self.point_size, 0.5, 200.0))
+            print(f"[view] point size = {self.point_size:.1f} "
+                  f"(] larger, [ smaller)", flush=True)
+        else:
+            print(f"[view] zoom = {self.zoom:.2f}x "
+                  f"(i in, o out, wheel to zoom)", flush=True)
 
     def update(self, fr, pts, hits, frames, fps, error=None, diag=None):
         args = self.args
@@ -856,9 +909,58 @@ def run_demo(args):
             exporter.close()
 
 
+def _kill_matching(pattern, exclude_pids=()):
+    """SIGTERM every process whose command line matches ``pattern``.
+
+    Returns the list of pids that were signalled. ``exclude_pids`` (plus the
+    current pid) are never killed.
+    """
+    try:
+        out = subprocess.run(['pgrep', '-f', pattern],
+                             capture_output=True, text=True).stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        return []
+    killed = []
+    for tok in out:
+        try:
+            pid = int(tok)
+        except ValueError:
+            continue
+        if pid == os.getpid() or pid in exclude_pids:
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+            killed.append(pid)
+        except (ProcessLookupError, PermissionError):
+            pass
+    return killed
+
+
+def kill_stale_instances(args):
+    """Clear any previous 3D-viewer run before we start.
+
+    The previous viewer and its FC client hold the CAN/perception UDP ports
+    (50007, 40204); if they are left running a new launch fails to bind.
+    We SIGTERM other viewer processes, and — only when *we* will manage the
+    FC client (i.e. not --no-fc) — any stray radar_min_client as well, so we
+    never kill an external FC the user launched themselves.
+    """
+    my_pid = os.getpid()
+    killed_views = _kill_matching('radar_3d_viewer.py', exclude_pids=(my_pid,))
+    killed_fcs = []
+    if not getattr(args, 'no_fc', False):
+        killed_fcs = _kill_matching('radar_min_client.py')
+    if killed_views or killed_fcs:
+        print(f"[boot] cleared previous runs: viewers={killed_views} "
+              f"fc_clients={killed_fcs}", flush=True)
+        # Give the OS a moment to release the bound ports.
+        time.sleep(1.0)
+
+
 def run(args):
     if args.demo:
         return run_demo(args)
+    kill_stale_instances(args)
     auto = args.udp is None and not args.deploy
     args.ssh = args.ssh or f"root@{args.radar_ip}"
     # The V2 source needs the radar driven into its active state, so it also
