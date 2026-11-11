@@ -1228,6 +1228,41 @@ static const struct file_operations fops_roam_table = {
 	.llseek = default_llseek,
 };
 
+static int ath6kl_hex2bin(char ch)
+{
+	if (ch >= '0' && ch <= '9')
+		return ch - '0';
+	if (ch >= 'a' && ch <= 'f')
+		return ch - 'a' + 10;
+	if (ch >= 'A' && ch <= 'F')
+		return ch - 'A' + 10;
+	return -1;
+}
+
+/* Local replacement for mac_pton(), removed from newer kernels. */
+static bool ath6kl_mac_pton(const char *s, u8 *mac)
+{
+	int i;
+
+	/* 00:11:22:33:44:55 */
+	if (strlen(s) < ETH_ALEN * 3 - 1)
+		return false;
+
+	for (i = 0; i < ETH_ALEN; i++) {
+		int hi = ath6kl_hex2bin(s[i * 3]);
+		int lo = ath6kl_hex2bin(s[i * 3 + 1]);
+
+		if (hi < 0 || lo < 0)
+			return false;
+		if (i != ETH_ALEN - 1 && s[i * 3 + 2] != ':')
+			return false;
+
+		mac[i] = (u8)((hi << 4) | lo);
+	}
+
+	return true;
+}
+
 static ssize_t ath6kl_force_roam_write(struct file *file,
 				       const char __user *user_buf,
 				       size_t count, loff_t *ppos)
@@ -1243,7 +1278,7 @@ static ssize_t ath6kl_force_roam_write(struct file *file,
 		return -EFAULT;
 	buf[len] = '\0';
 
-	if (!mac_pton(buf, bssid))
+	if (!ath6kl_mac_pton(buf, bssid))
 		return -EINVAL;
 
 	ret = ath6kl_wmi_force_roam_cmd(ar->wmi, bssid);

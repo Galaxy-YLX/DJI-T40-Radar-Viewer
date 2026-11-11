@@ -1,0 +1,12 @@
+./debug.o
+./hif.o
+./htc_mbox.o
+./htc_pipe.o
+./bmi.o
+./cfg80211.o
+./init.o
+./main.o
+./txrx.o
+./wmi.o
+./core.o
+./recovery.o

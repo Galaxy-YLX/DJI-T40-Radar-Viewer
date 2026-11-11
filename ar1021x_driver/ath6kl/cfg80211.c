@@ -1123,13 +1123,13 @@ void ath6kl_cfg80211_ch_switch_notify(struct ath6kl_vif *vif, int freq,
 	wiphy_unlock(vif->ar->wiphy);
 }
 
-static int ath6kl_cfg80211_add_key(struct wiphy *wiphy, struct net_device *ndev,
+static int ath6kl_cfg80211_add_key(struct wiphy *wiphy, struct wireless_dev *wdev,
 				   int link_id, u8 key_index, bool pairwise,
 				   const u8 *mac_addr,
 				   struct key_params *params)
 {
-	struct ath6kl *ar = ath6kl_priv(ndev);
-	struct ath6kl_vif *vif = netdev_priv(ndev);
+	struct ath6kl_vif *vif = ath6kl_vif_from_wdev(wdev);
+	struct ath6kl *ar = ath6kl_priv(vif->ndev);
 	struct ath6kl_key *key = NULL;
 	int seq_len;
 	u8 key_usage;
@@ -1248,12 +1248,12 @@ static int ath6kl_cfg80211_add_key(struct wiphy *wiphy, struct net_device *ndev,
 				     (u8 *) mac_addr, SYNC_BOTH_WMIFLAG);
 }
 
-static int ath6kl_cfg80211_del_key(struct wiphy *wiphy, struct net_device *ndev,
+static int ath6kl_cfg80211_del_key(struct wiphy *wiphy, struct wireless_dev *wdev,
 				   int link_id, u8 key_index, bool pairwise,
 				   const u8 *mac_addr)
 {
-	struct ath6kl *ar = ath6kl_priv(ndev);
-	struct ath6kl_vif *vif = netdev_priv(ndev);
+	struct ath6kl_vif *vif = ath6kl_vif_from_wdev(wdev);
+	struct ath6kl *ar = ath6kl_priv(vif->ndev);
 
 	ath6kl_dbg(ATH6KL_DBG_WLAN_CFG, "%s: index %d\n", __func__, key_index);
 
@@ -1278,13 +1278,13 @@ static int ath6kl_cfg80211_del_key(struct wiphy *wiphy, struct net_device *ndev,
 	return ath6kl_wmi_deletekey_cmd(ar->wmi, vif->fw_vif_idx, key_index);
 }
 
-static int ath6kl_cfg80211_get_key(struct wiphy *wiphy, struct net_device *ndev,
+static int ath6kl_cfg80211_get_key(struct wiphy *wiphy, struct wireless_dev *wdev,
 				   int link_id, u8 key_index, bool pairwise,
 				   const u8 *mac_addr, void *cookie,
 				   void (*callback) (void *cookie,
 						     struct key_params *))
 {
-	struct ath6kl_vif *vif = netdev_priv(ndev);
+	struct ath6kl_vif *vif = ath6kl_vif_from_wdev(wdev);
 	struct ath6kl_key *key = NULL;
 	struct key_params params;
 
@@ -1775,11 +1775,11 @@ static bool is_rate_ht40(s32 rate, u8 *mcs, bool *sgi)
 	return false;
 }
 
-static int ath6kl_get_station(struct wiphy *wiphy, struct net_device *dev,
+static int ath6kl_get_station(struct wiphy *wiphy, struct wireless_dev *wdev,
 			      const u8 *mac, struct station_info *sinfo)
 {
-	struct ath6kl *ar = ath6kl_priv(dev);
-	struct ath6kl_vif *vif = netdev_priv(dev);
+	struct ath6kl_vif *vif = ath6kl_vif_from_wdev(wdev);
+	struct ath6kl *ar = ath6kl_priv(vif->ndev);
 	long left;
 	bool sgi;
 	s32 rate;
@@ -2992,23 +2992,23 @@ static int ath6kl_stop_ap(struct wiphy *wiphy, struct net_device *dev,
 
 static const u8 bcast_addr[ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
 
-static int ath6kl_del_station(struct wiphy *wiphy, struct net_device *dev,
+static int ath6kl_del_station(struct wiphy *wiphy, struct wireless_dev *wdev,
 			      struct station_del_parameters *params)
 {
-	struct ath6kl *ar = ath6kl_priv(dev);
-	struct ath6kl_vif *vif = netdev_priv(dev);
+	struct ath6kl_vif *vif = ath6kl_vif_from_wdev(wdev);
+	struct ath6kl *ar = ath6kl_priv(vif->ndev);
 	const u8 *addr = params->mac ? params->mac : bcast_addr;
 
 	return ath6kl_wmi_ap_set_mlme(ar->wmi, vif->fw_vif_idx, WMI_AP_DEAUTH,
 				      addr, WLAN_REASON_PREV_AUTH_NOT_VALID);
 }
 
-static int ath6kl_change_station(struct wiphy *wiphy, struct net_device *dev,
+static int ath6kl_change_station(struct wiphy *wiphy, struct wireless_dev *wdev,
 				 const u8 *mac,
 				 struct station_parameters *params)
 {
-	struct ath6kl *ar = ath6kl_priv(dev);
-	struct ath6kl_vif *vif = netdev_priv(dev);
+	struct ath6kl_vif *vif = ath6kl_vif_from_wdev(wdev);
+	struct ath6kl *ar = ath6kl_priv(vif->ndev);
 	int err;
 
 	if (vif->nw_type != AP_NETWORK)
@@ -3030,7 +3030,7 @@ static int ath6kl_remain_on_channel(struct wiphy *wiphy,
 				    struct wireless_dev *wdev,
 				    struct ieee80211_channel *chan,
 				    unsigned int duration,
-				    u64 *cookie)
+				    u64 *cookie, const u8 *rx_addr)
 {
 	struct ath6kl_vif *vif = ath6kl_vif_from_wdev(wdev);
 	struct ath6kl *ar = ath6kl_priv(vif->ndev);
