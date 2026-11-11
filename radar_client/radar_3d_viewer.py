@@ -119,6 +119,12 @@ def build_parser():
                         'Signal strength still modulates '
                         'size within 0.4x..1x of this value. In the window '
                         'use ] to enlarge and [ to shrink (also +/-)')
+    p.add_argument('--point', dest='show_points', action='store_true',
+                   help='Enable the point-cloud display mode (default).')
+    p.add_argument('--no-point', dest='show_points', action='store_false',
+                   help='Hide the point cloud (show the reference frame '
+                        'only).')
+    p.set_defaults(show_points=True)
     p.add_argument('--export', metavar='PATH',
                    help='Emit RAW points to .csv / .jsonl / .ply '
                         '(PLY writes one file per frame)')
@@ -740,6 +746,7 @@ class PointCloud3D:
                                       ha='center', va='center', fontsize=14,
                                       color=GREEN, alpha=0.9)
         self.point_size = max(0.5, float(args.point_size))
+        self.show_points = bool(getattr(args, 'show_points', True))
         self.fig.canvas.mpl_connect('key_press_event', self._on_key)
         self.fig.canvas.mpl_connect('scroll_event', self._on_scroll)
 
@@ -802,11 +809,19 @@ class PointCloud3D:
             else:
                 vals = None
             snr = np.array([p['snr'] for p in pts], dtype=float)
-            sizes = self.point_size * (0.4 + 0.6 * np.clip(snr / 255.0,
-                                                           0.0, 1.0))
+            if self.show_points:
+                plot_xs, plot_ys, plot_zs = xs, ys, zs
+                plot_sizes = self.point_size * (0.4 + 0.6 * np.clip(
+                    snr / 255.0, 0.0, 1.0))
+                plot_vals = vals
+            else:
+                plot_xs = plot_ys = plot_zs = plot_sizes = np.array([])
+                plot_vals = np.array([]) if self.use_cmap else None
         else:
-            xs = ys = zs = sizes = np.array([])
+            xs = ys = zs = np.array([])
             vals = np.array([]) if self.use_cmap else None
+            plot_xs = plot_ys = plot_zs = plot_sizes = np.array([])
+            plot_vals = vals
 
         if not self.use_cmap:
             # Rebuild the collection every frame. Updating the private
@@ -816,17 +831,18 @@ class PointCloud3D:
                 self.sc.remove()
             except Exception:
                 pass
-            self.sc = self.ax.scatter(xs, ys, zs, c=GREEN, s=sizes,
-                                      depthshade=False, alpha=0.9,
-                                      edgecolors='none')
+            self.sc = self.ax.scatter(plot_xs, plot_ys, plot_zs, c=GREEN,
+                                      s=plot_sizes, depthshade=False,
+                                      alpha=0.9, edgecolors='none')
         else:
             try:
-                self.sc._offsets3d = (xs, ys, zs)
-                self.sc.set_sizes(sizes)
-                self.sc.set_array(vals)
+                self.sc._offsets3d = (plot_xs, plot_ys, plot_zs)
+                self.sc.set_sizes(plot_sizes)
+                self.sc.set_array(plot_vals)
             except Exception:
                 self.sc.remove()
-                self.sc = self.ax.scatter(xs, ys, zs, c=vals, s=sizes,
+                self.sc = self.ax.scatter(plot_xs, plot_ys, plot_zs,
+                                          c=plot_vals, s=plot_sizes,
                                           cmap=self.cmap, norm=self.norm,
                                           depthshade=False, alpha=0.9,
                                           edgecolors='none')
