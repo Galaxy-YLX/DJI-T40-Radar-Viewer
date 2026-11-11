@@ -32,8 +32,10 @@ import time
 from pathlib import Path
 
 import numpy as np
+from types import SimpleNamespace
 
 import radar_viewer as rv
+from radar_min_client import parse_v2_frame, decode_perception_1e61_entries
 
 HERE = Path(__file__).resolve().parent
 SETUP = HERE.parent / 'setup'
@@ -122,6 +124,27 @@ def build_parser():
     p.add_argument('--demo', action='store_true',
                    help='Render a synthetic green point cloud without any '
                         'radar hardware (verifies the display path)')
+    # ─── Point source ────────────────────────────────────────────────────
+    # 'side' (default) reads the on-radar omni memory snapshot via the
+    # streamer (needs the encoder->FPGA wire to be live). 'v2' instead
+    # consumes the DJI 1E61 perception stream (ground/wire/pcla) which the
+    # radar emits over UDP 40204 — this is the radar's real point cloud and
+    # works even when the omni snapshot is empty (e.g. bench units whose
+    # encoder isn't driven into the FPGA).
+    src = p.add_argument_group('point source')
+    src.add_argument('--source', choices=('side', 'v2'), default='side',
+                     help="Point source: 'side' = omni memory snapshot "
+                          "(default), 'v2' = DJI 1E61 UDP perception stream")
+    src.add_argument('--local-ip', default=DEFAULT_HOST_IP,
+                     help='Local host IP to bind for the V2 listener '
+                          '(default 192.168.8.1)')
+    src.add_argument('--v2-local-port', type=int, default=40204,
+                     metavar='PORT',
+                     help='Local UDP port for the 1E61 stream (default 40204)')
+    src.add_argument('--v2-ground-window', type=float, default=2.0,
+                     metavar='SEC',
+                     help='Ground/wire/pcla accumulation window for the V2 '
+                          'source (default 2.0 s)')
     return p
 
 
@@ -200,6 +223,10 @@ def start_fc_client(args):
     cmd = [sys.executable, str(HERE / 'radar_min_client.py'),
            '--can-bridge', args.can_iface,
            '--radar-ip', args.radar_ip]
+    # When the 3D viewer owns the 1E61 port (source='v2'), keep the FC
+    # client from also binding 40204 so the viewer can listen exclusively.
+    if getattr(args, 'source', 'side') == 'v2':
+        cmd.append('--no-v2-listen')
     print(f"[boot] starting FC client: {' '.join(cmd)}")
     proc = subprocess.Popen(cmd, cwd=str(HERE), stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -291,6 +318,133 @@ def make_side_reader(args):
     else:
         host = args.udp.split(':')[0] if ':' in args.udp else args.udp
     return rv.UDPStreamReader(host, rv.SIDE_PORT, rv.SIDE_FRAME_SIZE)
+
+
+class V2PointSource:
+    """Listen on the DJI V2 perception UDP port (default 40204) and aggregate
+    the 1E61 ground/wire/pcla point clouds into the same
+    ``{x, y, z, r, sector, snr}`` dicts the SIDE path produces.
+
+    The 1E61 payload already carries body-frame coordinates (x forward,
+    y right, z up, metres) so no azimuth projection is needed. This is the
+    radar's real perception output and is available even when the on-radar
+    omni memory snapshot (the 'side' source) is empty — e.g. bench units
+    where the encoder->FPGA wire isn't driven.
+    """
+
+    def __init__(self, local_ip=DEFAULT_HOST_IP, v2_port=40204,
+                 ground_window=2.0):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except OSError:
+            pass
+        self.sock.bind((local_ip, v2_port))
+        self.sock.setblocking(False)
+        self.ground_window = max(0.1, float(ground_window))
+        # wire/pcla are sparse (subtype 1 ~0.17 Hz, subtype 2 ~1.1 Hz); keep
+        # the latest frame for a longer window so they stay visible.
+        self.slow_window = 10.0
+        self.ground_frames = []     # list[(ts, [pts])]
+        self.wire_latest = None     # (ts, [pts]) | None
+        self.pcla_latest = None     # (ts, [pts]) | None
+        self.total = 0
+        self.lock = threading.Lock()
+        print(f"[v2] listening for 1E61 perception on {local_ip}:{v2_port}")
+
+    def _ingest(self, payload):
+        try:
+            subtype, entries = decode_perception_1e61_entries(payload)
+        except Exception:
+            return
+        pts = []
+        for e in entries:
+            x, y, z = e['x_m'], e['y_m'], e['z_m']
+            if not (np.isfinite(x) and np.isfinite(y) and np.isfinite(z)):
+                continue
+            r = float(np.sqrt(x * x + y * y + z * z))
+            pts.append({'x': float(x), 'y': float(y), 'z': float(z),
+                        'r': r, 'sector': int(e['id']),
+                        'snr': float(e['metric'])})
+        if not pts:
+            return
+        ts = time.monotonic()
+        with self.lock:
+            if subtype == 0:
+                self.ground_frames.append((ts, pts))
+            elif subtype == 1:
+                self.wire_latest = (ts, pts)
+            elif subtype == 2:
+                self.pcla_latest = (ts, pts)
+            else:
+                return
+            self.total += len(pts)
+
+    def _pump(self):
+        while True:
+            try:
+                data, _ = self.sock.recvfrom(65535)
+            except (BlockingIOError, OSError):
+                break
+            f = parse_v2_frame(data)
+            if f is None or f.msg_id != 0x1E61:
+                continue
+            self._ingest(f.payload)
+
+    def get_points(self, args, persistence=None):
+        self._pump()
+        now = time.monotonic()
+        with self.lock:
+            self.ground_frames = [(t, p) for (t, p) in self.ground_frames
+                                  if now - t <= self.ground_window]
+            pts = []
+            for _, p in self.ground_frames:
+                pts.extend(p)
+            if self.wire_latest and now - self.wire_latest[0] <= self.slow_window:
+                pts.extend(self.wire_latest[1])
+            if self.pcla_latest and now - self.pcla_latest[0] <= self.slow_window:
+                pts.extend(self.pcla_latest[1])
+            total = self.total
+            n_ground = sum(len(p) for _, p in self.ground_frames)
+        if args.min_range:
+            pts = [p for p in pts if p['r'] >= args.min_range]
+        if args.min_snr:
+            pts = [p for p in pts if p['snr'] >= args.min_snr]
+        fr = SimpleNamespace(
+            frame_token=total, sectors_decoded=len(pts),
+            rot_angle_a=0, rot_angle_b=0, rot_angle_c=0,
+            cfar_error=0, point_count_total=len(pts))
+        diag = {'sector_pts': len(pts), 'fallback': False, 'active': n_ground}
+        return fr, pts, [], diag
+
+    def close(self):
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+
+def make_v2_source(args):
+    return V2PointSource(local_ip=args.local_ip, v2_port=args.v2_local_port,
+                         ground_window=args.v2_ground_window)
+
+
+def make_source(args):
+    if args.source == 'v2':
+        return make_v2_source(args)
+    return make_side_reader(args)
+
+
+def pull_frame(source, args, persistence):
+    """Return (fr, pts, hits, diag) from either source, or None if the side
+    reader has no frame yet."""
+    if isinstance(source, rv.UDPStreamReader):
+        raw = source.try_read_frame()
+        if raw is None:
+            return None
+        return decode_frame(raw, args, persistence)
+    return source.get_points(args, persistence)
 
 
 def project_ignoring_active(fr, args):
@@ -454,24 +608,29 @@ def emit_frame(args, exporter, fr, pts, frame_no, fps, diag=None):
         exporter.write(fr, pts)
 
 
-def dump_once(reader, args, persistence, exporter):
+def dump_once(source, args, persistence, exporter):
     deadline = time.monotonic() + 8.0
-    raw = None
+    result = None
     while time.monotonic() < deadline:
-        raw = reader.try_read_frame()
-        if raw is not None:
+        result = pull_frame(source, args, persistence)
+        if result is None:
+            time.sleep(0.1)
+            continue
+        fr, pts, _, diag = result
+        # For the V2 source a result is always returned, but it may be empty
+        # until the first 1E61 frame arrives — keep waiting for points.
+        if isinstance(source, rv.UDPStreamReader) or pts:
             break
         time.sleep(0.1)
-    if raw is None:
-        print("no SIDE frame within 8s — is the streamer running?")
+    if result is None:
+        print("no frame within 8s — is the source producing data?")
         return
-    fr, pts, _, diag = decode_frame(raw, args, persistence)
-    print("=== RAW 3D point cloud (one SIDE frame) ===")
+    fr, pts, _, diag = result
+    print("=== RAW 3D point cloud (one frame) ===")
     emit_frame(args, exporter, fr, pts, 1, 0.0, diag=diag)
     if not pts:
         print(f"no points — active_sec={diag['active']} "
-              f"sector_pts={diag['sector_pts']}; if sector_pts > 0 the "
-              f"fallback projection should have produced points")
+              f"sector_pts={diag['sector_pts']}")
         return
     for axis in ('x', 'y', 'z', 'r'):
         vals = np.array([p[axis] for p in pts])
@@ -700,7 +859,9 @@ def run(args):
         return run_demo(args)
     auto = args.udp is None and not args.deploy
     args.ssh = args.ssh or f"root@{args.radar_ip}"
-    need_fc = (args.start_fc or auto) and not args.no_fc
+    # The V2 source needs the radar driven into its active state, so it also
+    # requires the FC client (unless the user supplies one via --no-fc).
+    need_fc = (args.start_fc or auto or args.source == 'v2') and not args.no_fc
 
     if auto:
         print("[boot] auto mode: preflight -> FC client -> streamer -> 3D view")
@@ -719,12 +880,15 @@ def run(args):
             tol_az_deg=args.persist_tol_az,
             tol_r_m=args.persist_tol_r,
         )
-        reader = make_side_reader(args)
-        print(f"[boot] {'raw' if args.persist_min_hits == 0 else 'filtered'} "
-              f"point cloud starting", flush=True)
+        source = make_source(args)
+        reader = source  # kept for cleanup in finally
+        mode = 'v2 (1E61)' if args.source == 'v2' else (
+            'raw' if args.persist_min_hits == 0 else 'filtered')
+        print(f"[boot] {mode} point cloud starting (source={args.source})",
+              flush=True)
 
         if args.dump:
-            dump_once(reader, args, persistence, exporter)
+            dump_once(source, args, persistence, exporter)
             return
 
         scene = PointCloud3D(args)
@@ -733,10 +897,10 @@ def run(args):
                  't0': time.monotonic()}
 
         def tick(_):
-            raw = reader.try_read_frame()
-            if raw is not None:
+            result = pull_frame(source, args, persistence)
+            if result is not None:
                 try:
-                    fr, pts, hits, diag = decode_frame(raw, args, persistence)
+                    fr, pts, hits, diag = result
                     state.update(fr=fr, pts=pts, hits=hits, diag=diag,
                                  error=None)
                     state['frames'] += 1

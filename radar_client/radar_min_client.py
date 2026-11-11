@@ -193,6 +193,8 @@ class ClientConfig:
     control_local_port: int = 50007
     control_remote_port: int = 50007
     v2_local_port: int = 40204
+    v2_listen: bool = True        # when False, do not bind the V2 rx socket
+                                  # (lets a co-located viewer own port 40204)
     sender: int = 0x03
     receiver: int = 0x00
     flags: int = 0x00
@@ -210,6 +212,9 @@ class ClientConfig:
     dump_entries: int = 3
     send_motor_start: bool = False
     motor_start_subid: int = 1
+    motor_run_rpm: int = 1600      # rotor speed setpoint sent over CAN while running
+    motor_stop_rpm: int = 50       # rotor speed setpoint sent at shutdown (idle)
+    motor_speed_hz: float = 5.0    # how often the running setpoint is re-sent
     send_sample_start: bool = False
     send_sample_mark: bool = False
     send_data_start_type: Optional[int] = None
@@ -1864,11 +1869,15 @@ class RadarClient:
         self.plotter = self._init_plotter(config)
         self.start_monotonic = time.monotonic()
         self.control_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.v2_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.control_sock.bind((config.local_ip, config.control_local_port))
-        self.v2_sock.bind((config.local_ip, config.v2_local_port))
         self.control_sock.setblocking(False)
-        self.v2_sock.setblocking(False)
+        # V2 rx socket is optional: a co-located 3D viewer may want to own
+        # port 40204 itself (--no-v2-listen), so we only bind when enabled.
+        self.v2_sock = None
+        if config.v2_listen and config.v2_local_port > 0:
+            self.v2_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.v2_sock.bind((config.local_ip, config.v2_local_port))
+            self.v2_sock.setblocking(False)
         self.v1_seq = 0
         self.time_sync_counter = 0
         self.data_transfer = DataTransferState()
@@ -2221,11 +2230,18 @@ class RadarClient:
 
     def run(self) -> None:
         self.send_one_shots()
+        motor_speed_interval = 1.0 / max(0.1, self.config.motor_speed_hz)
+        motor_speed_next_at = 0.0
         while True:
             if self.plotter is not None and not self.plotter.is_alive():
                 print("[info] plot window closed, exiting")
                 break
             now = time.monotonic()
+            # Periodically push the running rotor-speed setpoint to the ESC
+            # so it never lapses to its safety-timeout default.
+            if self.can_device is not None and now >= motor_speed_next_at:
+                self._send_motor_speed_on_can(self.config.motor_run_rpm)
+                motor_speed_next_at = now + motor_speed_interval
             timeout = 0.25
             for task in self.tasks:
                 if now >= task.next_at:
@@ -2242,7 +2258,9 @@ class RadarClient:
                 timeout = min(timeout, self._tick_replay(now))
             if self.plotter is not None:
                 timeout = min(timeout, 0.05)
-            read_socks = [self.control_sock, self.v2_sock]
+            read_socks = [self.control_sock]
+            if self.v2_sock is not None:
+                read_socks.append(self.v2_sock)
             if self.can_device is not None:
                 read_socks.append(self.can_device.sock)
             readable, _, _ = select.select(read_socks, [], [], timeout)
@@ -2337,19 +2355,17 @@ class RadarClient:
         except OSError:
             pass
 
-    def _send_motor_stop_on_can(self) -> None:
-        """Emit a final motor_speed=0 DUML on CAN before releasing the
-        bridge. Many ESCs hold the last commanded speed if no new
-        setpoint arrives within their safety timeout — explicitly
-        zeroing gives a deterministic ramp-down instead of relying on
-        that timeout. Sender/receiver match what app.elf uses for its
-        own motor_speed frames (RADAR:esc → DEV:esc).
+    def _send_motor_speed_on_can(self, rpm: int) -> None:
+        """Command the ESC rotor speed over CAN (0x1E80 motor_speed,
+        RADAR:esc → DEV:esc). ``rpm`` is a u16 LE setpoint. Sender/receiver
+        match what app.elf uses for its own motor_speed frames.
         """
         if self.can_device is None:
             return
+        payload = struct.pack("<H", max(0, min(65535, int(rpm))))
         frame = build_v1_frame(
             msg_id=0x1E80,          # cmd_set=0x1E, cmd_id=0x80 motor_speed
-            payload=bytes([0, 0]),  # 2B u16 LE = 0 rpm setpoint
+            payload=payload,
             seq=self._next_seq(),
             sender=0x78,            # RADAR:esc (packed = (3<<5)|0x18)
             receiver=0x18,          # DEV:esc
@@ -2362,13 +2378,22 @@ class RadarClient:
                 self._log_can_raw(self.config.can_tx_id, chunk)
             self._log_can_duml("UDP_TO_CAN", self.config.can_tx_id, frame)
         except OSError as exc:
-            print(f"[bridge] shutdown motor-stop tx failed: {exc}")
+            print(f"[bridge] motor-speed tx failed: {exc}")
             return
+        print(f"[bridge] sent motor_speed={int(rpm)} rpm to ESC "
+              f"({len(frame)}B → can_id=0x{self.config.can_tx_id:03X})")
+
+    def _send_motor_stop_on_can(self) -> None:
+        """Emit a final motor_speed setpoint on CAN before releasing the
+        bridge. Many ESCs hold the last commanded speed if no new setpoint
+        arrives within their safety timeout — explicitly sending the idle
+        setpoint (config.motor_stop_rpm, default 50) gives a deterministic
+        ramp-down to idle instead of relying on that timeout.
+        """
+        self._send_motor_speed_on_can(self.config.motor_stop_rpm)
         # Short grace period so the kernel CAN queue is actually flushed
         # to the wire before we tear the socket down.
         time.sleep(0.05)
-        print(f"[bridge] shutdown: sent motor_speed=0 to ESC "
-              f"({len(frame)}B → can_id=0x{self.config.can_tx_id:03X})")
 
     def _send_motor_stop_via_udp(self) -> None:
         """Send a 0x1E22 flight_ctrl (motor_stop) to app.elf over UDP.
@@ -2774,6 +2799,10 @@ def parse_args() -> ClientConfig:
     parser.add_argument("--control-local-port", type=int, default=50007)
     parser.add_argument("--control-remote-port", type=int, default=50007)
     parser.add_argument("--v2-local-port", type=int, default=40204)
+    parser.add_argument("--no-v2-listen", action="store_true",
+                        help="Do not bind the V2 perception rx socket "
+                             "(40204). Use when a co-located 3D viewer owns "
+                             "that port to read the 1E61 point cloud.")
     parser.add_argument("--sender", type=lambda v: int(v, 0), default=0x03)
     parser.add_argument("--receiver", type=lambda v: int(v, 0), default=0x00)
     parser.add_argument("--flags", type=lambda v: int(v, 0), default=0x00)
@@ -2804,6 +2833,15 @@ def parse_args() -> ClientConfig:
     parser.add_argument("--dump-entries", type=int, default=3)
     parser.add_argument("--send-motor-start", action="store_true")
     parser.add_argument("--motor-start-subid", type=lambda v: int(v, 0), default=1)
+    parser.add_argument("--motor-run-rpm", type=int, default=1600,
+                        help="Rotor speed setpoint (rpm) sent over CAN while "
+                             "running (default 1600).")
+    parser.add_argument("--motor-stop-rpm", type=int, default=50,
+                        help="Rotor speed setpoint (rpm) sent at shutdown "
+                             "(idle; default 50).")
+    parser.add_argument("--motor-speed-hz", type=float, default=5.0,
+                        help="How often to re-send the running speed setpoint "
+                             "(default 5 Hz).")
     parser.add_argument("--send-sample-start", action="store_true")
     parser.add_argument("--send-sample-mark", action="store_true")
     parser.add_argument("--send-data-start-type", type=int, choices=(0, 1))
@@ -2916,6 +2954,9 @@ def parse_args() -> ClientConfig:
         dump_entries=args.dump_entries,
         send_motor_start=args.send_motor_start,
         motor_start_subid=args.motor_start_subid,
+        motor_run_rpm=args.motor_run_rpm,
+        motor_stop_rpm=args.motor_stop_rpm,
+        motor_speed_hz=args.motor_speed_hz,
         send_sample_start=args.send_sample_start,
         send_sample_mark=args.send_sample_mark,
         send_data_start_type=args.send_data_start_type,
@@ -2952,6 +2993,7 @@ def parse_args() -> ClientConfig:
         replay_esc_loop=not args.no_replay_loop,
         replay_esc_speed=args.replay_esc_speed,
         replay_esc_only_motor=args.replay_only_motor,
+        v2_listen=not args.no_v2_listen,
     )
 
 
@@ -2962,7 +3004,10 @@ def main() -> int:
         f"[cfg] control tx/rx bind={config.local_ip}:{config.control_local_port} -> "
         f"{config.radar_ip}:{config.control_remote_port}"
     )
-    print(f"[cfg] v2 rx bind={config.local_ip}:{config.v2_local_port}")
+    if config.v2_listen and config.v2_local_port > 0:
+        print(f"[cfg] v2 rx bind={config.local_ip}:{config.v2_local_port}")
+    else:
+        print("[cfg] v2 rx disabled (port 40204 left free for a co-located viewer)")
     print(
         f"[cfg] sender=0x{config.sender:02X} receiver=0x{config.receiver:02X} flags=0x{config.flags:02X} "
         f"pos_hz={config.pos_hz} debug_hz={config.debug_hz} time_hz={config.time_hz} "
