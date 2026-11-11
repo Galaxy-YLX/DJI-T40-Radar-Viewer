@@ -2,8 +2,9 @@
 # One-click launcher for the DJI T40 2D radar viewer (C++/Qt6).
 #
 # Usage:
-#   ./run.sh demo             synthetic points, no radar hardware
+#   ./run.sh                  live mode (default — no argument)
 #   ./run.sh live             full pipeline: env setup + FC client + streamer + viewer
+#   ./run.sh demo             synthetic points, no radar hardware
 #   ./run.sh dump             env setup + deploy streamer, decode one frame, exit
 #
 # The live/dump modes automatically check and (re)configure the environment:
