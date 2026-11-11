@@ -51,6 +51,7 @@ def build_parser():
             "  radar_3d_viewer.py                              # full auto start\n"
             "  radar_3d_viewer.py --export /tmp/raw.csv        # also save points\n"
             "  radar_3d_viewer.py --dump                       # one frame, text\n"
+            "  radar_3d_viewer.py --demo --point-size 4         # smaller dots\n"
             "  radar_3d_viewer.py --udp 192.168.8.2            # attach only\n"
         ))
     src = p.add_mutually_exclusive_group()
@@ -102,6 +103,11 @@ def build_parser():
                         'or map z / snr / sector with a colour scale')
     p.add_argument('--interval', type=int, default=80,
                    help='GUI refresh interval in ms (default 80)')
+    p.add_argument('--point-size', type=float, default=4.0,
+                   help='Marker area of the largest point (default 4). '
+                        'Signal strength still modulates '
+                        'size within 0.4x..1x of this value. In the window '
+                        'use ] to enlarge and [ to shrink (also +/-)')
     p.add_argument('--export', metavar='PATH',
                    help='Emit RAW points to .csv / .jsonl / .ply '
                         '(PLY writes one file per frame)')
@@ -562,6 +568,20 @@ class PointCloud3D:
         self.warning = self.ax.text2D(0.5, 0.5, '', transform=self.ax.transAxes,
                                       ha='center', va='center', fontsize=14,
                                       color=GREEN, alpha=0.9)
+        self.point_size = max(0.5, float(args.point_size))
+        self.fig.canvas.mpl_connect('key_press_event', self._on_key)
+
+    def _on_key(self, event):
+        key = event.key or ''
+        if key in (']', '+', '='):
+            self.point_size *= 1.25
+        elif key in ('[', '-'):
+            self.point_size /= 1.25
+        else:
+            return
+        self.point_size = float(np.clip(self.point_size, 0.5, 200.0))
+        print(f"[view] point size = {self.point_size:.1f} "
+              f"(] larger, [ smaller)", flush=True)
 
     def update(self, fr, pts, hits, frames, fps, error=None, diag=None):
         args = self.args
@@ -574,7 +594,8 @@ class PointCloud3D:
             else:
                 vals = None
             snr = np.array([p['snr'] for p in pts], dtype=float)
-            sizes = np.clip(snr / 5.0, 8, 60)
+            sizes = self.point_size * (0.4 + 0.6 * np.clip(snr / 255.0,
+                                                           0.0, 1.0))
         else:
             xs = ys = zs = sizes = np.array([])
             vals = np.array([]) if self.use_cmap else None
@@ -613,7 +634,7 @@ class PointCloud3D:
             colour_tag = 'GREEN' if not self.use_cmap else args.color_by
             body = (f"raw_pts={len(pts):4d}  frames={frames}  fps={fps:4.1f}  "
                     f"filter={'off (RAW)' if args.persist_min_hits == 0 else 'on'}  "
-                    f"color={colour_tag}")
+                    f"color={colour_tag}  size={self.point_size:.1f} ([/])")
             if diag:
                 body += (f"  active_sec={diag['active']} "
                          f"sector_pts={diag['sector_pts']}"
