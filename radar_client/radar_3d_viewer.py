@@ -11,6 +11,9 @@ filter, no SNR/range filtering unless explicitly requested):
 
     x = forward (m), y = right (m), z = up (m)
 
+Default look: bright green points on a black canvas. Use --color-by
+z / snr / sector to switch to a colour scale instead.
+
 Examples:
     python3 radar_3d_viewer.py
     python3 radar_3d_viewer.py --export /tmp/raw_points.csv --print-points 5
@@ -36,6 +39,7 @@ HERE = Path(__file__).resolve().parent
 SETUP = HERE.parent / 'setup'
 DEFAULT_RADAR_IP = '192.168.8.2'
 DEFAULT_HOST_IP = '192.168.8.1'
+GREEN = '#00ff66'
 
 
 def build_parser():
@@ -92,8 +96,10 @@ def build_parser():
     p.add_argument('--persist-tol-az', type=float, default=10.0)
     p.add_argument('--persist-tol-r', type=float, default=1.0)
 
-    p.add_argument('--color-by', choices=('z', 'snr', 'sector'), default='z',
-                   help='Point colour source (default z = height)')
+    p.add_argument('--color-by', choices=('none', 'z', 'snr', 'sector'),
+                   default='none',
+                   help='Point colour: none = green points on black (default), '
+                        'or map z / snr / sector with a colour scale')
     p.add_argument('--interval', type=int, default=80,
                    help='GUI refresh interval in ms (default 80)')
     p.add_argument('--export', metavar='PATH',
@@ -130,11 +136,31 @@ def iface_is_up(iface: str) -> bool:
         return False
 
 
+def ensure_can_queue(iface: str, want: int = 1000):
+    """Raise the SocketCAN tx queue when possible (default qlen is 10)."""
+    try:
+        cur = int(Path(f'/sys/class/net/{iface}/tx_queue_len').read_text().strip())
+    except (OSError, ValueError):
+        return
+    if cur >= want:
+        return
+    res = subprocess.run(['sudo', '-n', 'ip', 'link', 'set', iface,
+                          'txqueuelen', str(want)],
+                         stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+    if res.returncode == 0:
+        print(f"[boot] {iface} txqueuelen {cur} -> {want}")
+    else:
+        print(f"[boot] {iface} txqueuelen={cur} (optional: "
+              f"sudo ip link set {iface} txqueuelen {want})")
+
+
 def preflight(args):
     ok_ip = host_has_ip(DEFAULT_HOST_IP)
     ok_can = iface_is_up(args.can_iface)
     if ok_ip and ok_can:
         print(f"[boot] link OK ({DEFAULT_HOST_IP} owned, {args.can_iface} up)")
+        ensure_can_queue(args.can_iface)
         return
     print(f"[boot] link check: host IP={ok_ip}, {args.can_iface} up={ok_can}")
     if not args.auto_setup:
@@ -143,13 +169,21 @@ def preflight(args):
         raise SystemExit(2)
     if not ok_ip:
         print("[boot] running setup/start_ap.sh ...")
-        subprocess.run(['sudo', str(SETUP / 'start_ap.sh')], check=True)
+        res = subprocess.run(['sudo', str(SETUP / 'start_ap.sh')])
+        if res.returncode != 0:
+            raise RuntimeError(
+                "start_ap.sh failed — check that the AR1021x USB device is "
+                "enumerated (lsusb | grep 0cf3) and the radar has 15V power")
     if not ok_can:
         print("[boot] running setup/start_can.sh ...")
-        subprocess.run(['sudo', str(SETUP / 'start_can.sh')], check=True)
+        res = subprocess.run(['sudo', str(SETUP / 'start_can.sh')])
+        if res.returncode != 0:
+            raise RuntimeError("start_can.sh failed — check the PCAN-USB "
+                               "adapter with 'ip link show can0'")
     if not host_has_ip(DEFAULT_HOST_IP):
         raise RuntimeError(f"host still does not own {DEFAULT_HOST_IP}")
     print("[boot] link ready")
+    ensure_can_queue(args.can_iface)
 
 
 # ─── FC stand-in client ─────────────────────────────────────────────────
@@ -159,13 +193,28 @@ def start_fc_client(args):
            '--radar-ip', args.radar_ip]
     print(f"[boot] starting FC client: {' '.join(cmd)}")
     proc = subprocess.Popen(cmd, cwd=str(HERE), stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, bufsize=1)
+                            stderr=subprocess.STDOUT, text=True, bufsize=1)
 
     def pump(pipe):
-        for line in iter(pipe.readline, b''):
-            text = line.decode('utf-8', errors='replace').rstrip()
-            if any(k in text.lower() for k in ('[err]', 'traceback', 'failed')):
+        last_key = None
+        suppressed = 0
+        for line in iter(pipe.readline, ''):
+            text = line.rstrip()
+            low = text.lower()
+            if any(k in low for k in ('[err]', 'traceback', 'failed')):
+                key = low[:80]
+                if key == last_key:
+                    suppressed += 1
+                    continue
+                if suppressed:
+                    print(f"[fc] ... ({suppressed} repeated lines suppressed)",
+                          flush=True)
+                    suppressed = 0
                 print(f"[fc] {text}", flush=True)
+                last_key = key
+        if suppressed:
+            print(f"[fc] ... ({suppressed} repeated lines suppressed)",
+                  flush=True)
 
     threading.Thread(target=pump, args=(proc.stdout,), daemon=True).start()
     time.sleep(1.0)
@@ -359,26 +408,51 @@ class PointCloud3D:
 
         self.plt = plt
         self.args = args
-        self.cmap, vmin, vmax = {
-            'z': ('coolwarm', -args.z_range, args.z_range),
-            'snr': ('viridis', 0.0, 255.0),
-            'sector': ('hsv', 0.0, 360.0),
-        }[args.color_by]
-        self.norm = Normalize(vmin=vmin, vmax=vmax)
+        self.use_cmap = args.color_by != 'none'
+        if self.use_cmap:
+            self.cmap, vmin, vmax = {
+                'z': ('coolwarm', -args.z_range, args.z_range),
+                'snr': ('viridis', 0.0, 255.0),
+                'sector': ('hsv', 0.0, 360.0),
+            }[args.color_by]
+            self.norm = Normalize(vmin=vmin, vmax=vmax)
+            colour_kwargs = dict(c=[], cmap=self.cmap, norm=self.norm)
+        else:
+            self.cmap = self.norm = None
+            colour_kwargs = dict(c=GREEN)
 
         self.fig = plt.figure(figsize=(10, 8))
+        self.fig.patch.set_facecolor('black')
         self.ax = self.fig.add_subplot(111, projection='3d')
         ax = self.ax
+        ax.set_facecolor('black')
+        for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+            try:
+                axis.set_pane_color((0.0, 0.0, 0.0, 1.0))
+            except Exception:
+                pass
+            try:
+                axis.pane.set_facecolor((0.0, 0.0, 0.0, 1.0))
+                axis.pane.set_edgecolor('#24442f')
+            except Exception:
+                pass
+        try:
+            ax.grid(color='#1d3a27', linewidth=0.4)
+        except Exception:
+            pass
+        ax.tick_params(colors='#9fb8a6', labelsize=8)
+
         R, Z = args.range_m, args.z_range
-        ax.set_xlabel('x forward (m)')
-        ax.set_ylabel('y right (m)')
-        ax.set_zlabel('z up (m)')
+        ax.set_xlabel('x forward (m)', color='#c8d8ce')
+        ax.set_ylabel('y right (m)', color='#c8d8ce')
+        ax.set_zlabel('z up (m)', color='#c8d8ce')
         ax.set_xlim(-R, R)
         ax.set_ylim(-R, R)
         ax.set_zlim(-Z, Z)
         ax.view_init(elev=28, azim=-60)
         raw_tag = 'RAW' if args.persist_min_hits == 0 else 'filtered'
-        ax.set_title(f'DJI T40 — {raw_tag} 3D point cloud')
+        ax.set_title(f'DJI T40 — {raw_tag} 3D point cloud',
+                     color=GREEN if not self.use_cmap else '#e0e0e0')
         try:
             ax.set_box_aspect((2 * R, 2 * R, 2 * Z))
         except AttributeError:
@@ -388,20 +462,26 @@ class PointCloud3D:
         for radius in (5, 10, 15, 20, 25, 30):
             if radius <= R:
                 ax.plot(radius * np.cos(t), radius * np.sin(t),
-                        np.zeros_like(t), color='#999999', lw=0.5, alpha=0.5)
-        ax.plot([-R, R], [0, 0], [0, 0], color='#777777', lw=0.5, alpha=0.6)
-        ax.plot([0, 0], [-R, R], [0, 0], color='#777777', lw=0.5, alpha=0.6)
-        ax.scatter([0], [0], [0], marker='^', c='white', edgecolors='black',
+                        np.zeros_like(t), color='#1f4d2e', lw=0.6, alpha=0.8)
+        ax.plot([-R, R], [0, 0], [0, 0], color='#2d6b40', lw=0.6, alpha=0.8)
+        ax.plot([0, 0], [-R, R], [0, 0], color='#2d6b40', lw=0.6, alpha=0.8)
+        ax.scatter([0], [0], [0], marker='^', c='white', edgecolors=GREEN,
                    s=90, depthshade=False, zorder=10)
 
-        self.sc = ax.scatter([], [], [], s=[], c=[], cmap=self.cmap,
-                             norm=self.norm, depthshade=False, alpha=0.85,
-                             edgecolors='none')
-        self.fig.colorbar(self.sc, ax=ax, shrink=0.55, pad=0.1,
-                          label={'z': 'height z (m)', 'snr': 'SNR',
-                                 'sector': 'sector id'}[args.color_by])
+        self.sc = ax.scatter([], [], [], s=[], depthshade=False, alpha=0.9,
+                             edgecolors='none', **colour_kwargs)
+        if self.use_cmap:
+            cb = self.fig.colorbar(self.sc, ax=ax, shrink=0.55, pad=0.1,
+                                   label={'z': 'height z (m)', 'snr': 'SNR',
+                                          'sector': 'sector id'}[args.color_by])
+            cb.ax.yaxis.label.set_color('#c8d8ce')
+            cb.ax.tick_params(colors='#c8d8ce')
+            try:
+                cb.outline.set_edgecolor('#3a3a3a')
+            except Exception:
+                pass
         self.stats = self.fig.text(0.02, 0.02, '', fontsize=9,
-                                   family='monospace')
+                                   family='monospace', color='#8effb0')
 
     def update(self, fr, pts, hits, frames, fps, error=None):
         args = self.args
@@ -409,23 +489,30 @@ class PointCloud3D:
             xs = np.array([p['x'] for p in pts], dtype=float)
             ys = np.array([p['y'] for p in pts], dtype=float)
             zs = np.array([p['z'] for p in pts], dtype=float)
-            key = {'z': 'z', 'snr': 'snr', 'sector': 'sector'}[args.color_by]
-            vals = np.array([p[key] for p in pts], dtype=float)
+            if self.use_cmap:
+                vals = np.array([p[args.color_by] for p in pts], dtype=float)
+            else:
+                vals = None
             snr = np.array([p['snr'] for p in pts], dtype=float)
             sizes = np.clip(snr / 5.0, 8, 60)
         else:
-            xs = ys = zs = vals = sizes = np.array([])
+            xs = ys = zs = sizes = np.array([])
+            vals = np.array([]) if self.use_cmap else None
 
         try:
             self.sc._offsets3d = (xs, ys, zs)
-            self.sc.set_array(vals)
             self.sc.set_sizes(sizes)
+            if self.use_cmap and vals is not None:
+                self.sc.set_array(vals)
         except Exception:
             self.sc.remove()
-            self.sc = self.ax.scatter(xs, ys, zs, c=vals, s=sizes,
-                                      cmap=self.cmap, norm=self.norm,
-                                      depthshade=False, alpha=0.85,
-                                      edgecolors='none')
+            kwargs = dict(s=sizes, depthshade=False, alpha=0.9,
+                          edgecolors='none')
+            if self.use_cmap:
+                kwargs.update(c=vals, cmap=self.cmap, norm=self.norm)
+            else:
+                kwargs['c'] = GREEN
+            self.sc = self.ax.scatter(xs, ys, zs, **kwargs)
 
         if fr is None:
             head = "waiting for SIDE frames (UDP 9877) ..."
@@ -434,9 +521,10 @@ class PointCloud3D:
             head = (f"token={fr.frame_token}  sectors={fr.sectors_decoded}  "
                     f"rot_angle={fr.rot_angle_a}/{fr.rot_angle_b}/"
                     f"{fr.rot_angle_c}  cfar_error={fr.cfar_error}")
+            colour_tag = 'GREEN' if not self.use_cmap else args.color_by
             body = (f"raw_pts={len(pts):4d}  frames={frames}  fps={fps:4.1f}  "
                     f"filter={'off (RAW)' if args.persist_min_hits == 0 else 'on'}  "
-                    f"color={args.color_by}")
+                    f"color={colour_tag}")
             if fr.sectors_decoded == 0 and not pts:
                 body += "\n(no points: radar not in working state yet)"
         if error:
@@ -499,8 +587,10 @@ def run(args):
                                 error=state['error'])
 
         from matplotlib.animation import FuncAnimation
-        FuncAnimation(scene.fig, tick, interval=args.interval,
-                      blit=False, cache_frame_data=False)
+        # Keep a reference: FuncAnimation is otherwise garbage-collected
+        # before the first draw and the window closes immediately.
+        scene.ani = FuncAnimation(scene.fig, tick, interval=args.interval,
+                                  blit=False, cache_frame_data=False)
         scene.plt.show()
     finally:
         if exporter:

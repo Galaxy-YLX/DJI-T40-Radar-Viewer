@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import select
 import shlex
 import socket
@@ -300,7 +301,23 @@ class SocketCANDevice:
         return unpack_can_frame(raw)
 
     def send_can(self, can_id: int, data: bytes, *, extended: bool = False) -> None:
-        self.sock.send(pack_can_frame(can_id, data, extended=extended))
+        frame = pack_can_frame(can_id, data, extended=extended)
+        # SocketCAN tx queues are short (often qlen 10). A DUML frame is
+        # split into many 8B chunks written back-to-back, so a non-blocking
+        # socket can hit ENOBUFS/EAGAIN. Wait for writability instead of
+        # failing the whole frame.
+        deadline = time.monotonic() + 1.0
+        while True:
+            try:
+                self.sock.send(frame)
+                return
+            except OSError as exc:
+                if exc.errno not in (errno.ENOBUFS, errno.EAGAIN,
+                                     errno.EWOULDBLOCK):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise
+                select.select([], [self.sock.fileno()], [], 0.02)
 
     def send_stream(self, tx_id: int, data: bytes) -> int:
         sent = 0
