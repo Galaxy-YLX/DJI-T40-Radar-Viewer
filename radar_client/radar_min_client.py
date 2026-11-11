@@ -2438,7 +2438,8 @@ class RadarClient:
               so the firmware's motor FSM / unk_282DEC unwinds cleanly;
           (2) give app.elf ~150 ms to process that before tearing
               down the CAN / UDP paths;
-          (3) drive ESC to 0 rpm on CAN (if bridge is up);
+          (3) drive ESC to the idle setpoint (config.motor_stop_rpm,
+              default 50 rpm) on CAN (if bridge is up);
           (4) flush disk logs;
           (5) close sockets.
         """
@@ -3056,7 +3057,8 @@ def main() -> int:
         print(f"[cfg] capture_session={client.capture_root}")
     # Route SIGTERM through the same KeyboardInterrupt path as Ctrl-C so
     # both `kill <pid>` and interactive interrupt trigger client.close()
-    # (which sends motor_speed=0 on CAN, flushes logs, closes sockets).
+    # (which sends the motor_stop_rpm idle setpoint on CAN, flushes logs,
+    # closes sockets).
     import signal
     def _raise_kbd_interrupt(signum, _frame):
         raise KeyboardInterrupt
