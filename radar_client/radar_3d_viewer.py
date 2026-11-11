@@ -689,10 +689,6 @@ class PointCloud3D:
                 axis.pane.set_edgecolor('#24442f')
             except Exception:
                 pass
-        try:
-            ax.grid(color='#1d3a27', linewidth=0.4)
-        except Exception:
-            pass
         ax.tick_params(colors='#9fb8a6', labelsize=8)
 
         R, Z = args.range_m, args.z_range
@@ -718,13 +714,10 @@ class PointCloud3D:
         except AttributeError:
             pass
 
-        t = np.linspace(0, 2 * np.pi, 120)
-        for radius in (5, 10, 15, 20, 25, 30):
-            if radius <= R:
-                ax.plot(radius * np.cos(t), radius * np.sin(t),
-                        np.zeros_like(t), color='#1f4d2e', lw=0.6, alpha=0.8)
-        ax.plot([-R, R], [0, 0], [0, 0], color='#2d6b40', lw=0.6, alpha=0.8)
-        ax.plot([0, 0], [-R, R], [0, 0], color='#2d6b40', lw=0.6, alpha=0.8)
+        # Radar body-frame axes: forward (+x) and right (+y), shown as a
+        # bare cross with no grid, rings, ticks or distance labels.
+        ax.plot([-R, R], [0, 0], [0, 0], color='#3a6b4f', lw=0.9, alpha=0.9)
+        ax.plot([0, 0], [-R, R], [0, 0], color='#3a6b4f', lw=0.9, alpha=0.9)
         ax.scatter([0], [0], [0], marker='^', c='white', edgecolors=GREEN,
                    s=90, depthshade=False, zorder=10)
 
