@@ -3,17 +3,20 @@
 #
 # Usage:
 #   ./run.sh demo             synthetic points, no radar hardware
-#   ./run.sh live             full pipeline: FC client + streamer + viewer
-#   ./run.sh dump             deploy streamer, decode one frame, exit
+#   ./run.sh live             full pipeline: env setup + FC client + streamer + viewer
+#   ./run.sh dump             env setup + deploy streamer, decode one frame, exit
+#
+# The live/dump modes automatically check and (re)configure the environment:
+#   - host owns 192.168.8.1  (AR1021x AP)  -> setup/start_ap.sh
+#   - can0 is up             (PCAN-USB)     -> setup/start_can.sh
+# Set AUTO_SETUP=0 to only check (and fail with a hint) instead of running sudo.
 #
 # Environment overrides:
 #   RADAR_IP (192.168.8.2)   CAN_IFACE (can0)
 #   RANGE (25)  POINT_SIZE (2)  AZIMUTH_OFFSET (180)  MIN_SNR (0)  MIN_RANGE (0)
-#
-# Prerequisites for live/dump: the host owns 192.168.8.1 and can0 is up
-# (see setup/start_ap.sh + setup/start_can.sh), radar powered on WiFi.
 set -euo pipefail
 cd "$(dirname "$0")"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 BIN=build/radar2d
 RADAR_IP="${RADAR_IP:-192.168.8.2}"
@@ -28,6 +31,51 @@ VIEWER_ARGS=(--host "$RADAR_IP" --range "$RANGE" --point-size "$POINT_SIZE"
              --azimuth-offset "$AZIMUTH_OFFSET" --min-snr "$MIN_SNR"
              --min-range "$MIN_RANGE")
 
+# ── Environment auto-config ─────────────────────────────────────────────
+ensure_env() {
+    local ip_ok=0 can_ok=0
+
+    if ip -4 addr show 2>/dev/null | grep -q '192\.168\.8\.1'; then
+        ip_ok=1
+    fi
+    if [ -e "/sys/class/net/$CAN_IFACE" ] \
+       && [ "$(cat "/sys/class/net/$CAN_IFACE/operstate" 2>/dev/null)" = "up" ]; then
+        can_ok=1
+    fi
+
+    if [ "$ip_ok" = 1 ] && [ "$can_ok" = 1 ]; then
+        echo "[env] link OK (192.168.8.1 owned, $CAN_IFACE up)"
+        return 0
+    fi
+
+    if [ "${AUTO_SETUP:-1}" != "1" ]; then
+        echo "[env] not ready (ip_ok=$ip_ok can_ok=$can_ok). Run:" >&2
+        echo "      sudo $ROOT/setup/start_ap.sh && sudo $ROOT/setup/start_can.sh" >&2
+        exit 1
+    fi
+
+    if [ "$ip_ok" != 1 ]; then
+        echo "[env] 192.168.8.1 missing -> running setup/start_ap.sh"
+        sudo "$ROOT/setup/start_ap.sh"
+    fi
+    if [ "$can_ok" != 1 ]; then
+        echo "[env] $CAN_IFACE not up -> running setup/start_can.sh"
+        sudo "$ROOT/setup/start_can.sh"
+    fi
+
+    # Re-verify.
+    if ! ip -4 addr show 2>/dev/null | grep -q '192\.168\.8\.1'; then
+        echo "[env] error: still no 192.168.8.1 (AR1021x adapter plugged in?)" >&2
+        exit 1
+    fi
+    if ! { [ -e "/sys/class/net/$CAN_IFACE" ] \
+           && [ "$(cat "/sys/class/net/$CAN_IFACE/operstate" 2>/dev/null)" = "up" ]; }; then
+        echo "[env] error: $CAN_IFACE still not up (PCAN-USB adapter?)" >&2
+        exit 1
+    fi
+    echo "[env] environment configured"
+}
+
 # Build once if the binary is missing.
 if [ ! -x "$BIN" ]; then
     echo "[run] building radar2d ..."
@@ -41,21 +89,21 @@ case "$MODE" in
     exec "$BIN" --demo --range "$RANGE" --point-size "$POINT_SIZE"
     ;;
   dump)
-    python3 "$(dirname "$0")/../radar_client/deploy_side_streamer.py" \
-        --radar-ip "$RADAR_IP"
+    ensure_env
+    python3 "$ROOT/radar_client/deploy_side_streamer.py" --radar-ip "$RADAR_IP"
     exec "$BIN" --host "$RADAR_IP" --dump
     ;;
   live)
+    ensure_env
     echo "[run] starting FC client (can-bridge $CAN_IFACE) -> /tmp/radar2d_fc.log"
-    python3 "$(dirname "$0")/../radar_client/radar_min_client.py" \
+    python3 "$ROOT/radar_client/radar_min_client.py" \
         --can-bridge "$CAN_IFACE" --radar-ip "$RADAR_IP" \
         >/tmp/radar2d_fc.log 2>&1 &
     FC_PID=$!
     trap 'kill "$FC_PID" 2>/dev/null || true' EXIT
 
     echo "[run] deploying SIDE streamer ..."
-    python3 "$(dirname "$0")/../radar_client/deploy_side_streamer.py" \
-        --radar-ip "$RADAR_IP"
+    python3 "$ROOT/radar_client/deploy_side_streamer.py" --radar-ip "$RADAR_IP"
 
     echo "[run] launching 2D viewer ..."
     "$BIN" "${VIEWER_ARGS[@]}"
