@@ -168,8 +168,8 @@ void PpiWidget::drawHud(QPainter &p) {
     const qreal top = 14.0;
     const qreal rowH = fm.height() + 3.0;
 
-    const QString title = h.demo ? QString("[ 侧向雷达 / 演示 ]")
-                                 : QString("[ 侧向雷达 ]");
+    const QString title = h.demo ? QString("[ T40雷达 / 演示 ]")
+                                 : QString("[ T40雷达 ]");
     const QString badge =
         !h.live ? QString("[ 等待 ]  --.- Hz")
                 : (streaming

@@ -878,12 +878,12 @@ class PointCloud3D:
 
         if fr is None:
             lines = [
-                "[ 侧向雷达 ]                       [ 等待 ]",
+                "[ T40雷达 ]                        [ 等待 ]",
                 "----------------------------------------------",
-                " 等待侧向数据（UDP 9877）",
+                " 等待 T40雷达数据（UDP 9877）",
             ]
             status_colour = DIM_GREEN
-            self.warning.set_text('等待侧向雷达数据（UDP 9877）')
+            self.warning.set_text('等待 T40雷达数据（UDP 9877）')
         else:
             tag = '实时' if fps > 0.0 else '停滞'
             status_colour = GREEN if fps > 0.0 else DIM_GREEN
@@ -891,7 +891,7 @@ class PointCloud3D:
                           .get(args.color_by, '绿色'))
             filter_tag = '关（原始）' if args.persist_min_hits == 0 else '开'
             lines = [
-                f"[ 侧向雷达 ]        [ {tag} ] {fps:5.1f} Hz",
+                f"[ T40雷达 ]         [ {tag} ] {fps:5.1f} Hz",
                 "----------------------------------------------",
                 f" 帧号    {frames:<9} 令牌    {str(fr.frame_token):<7}",
                 f" 扇区    {str(fr.sectors_decoded):<3}/360   "
