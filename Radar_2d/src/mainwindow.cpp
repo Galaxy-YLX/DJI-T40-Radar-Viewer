@@ -37,6 +37,21 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     topBar->addWidget(new QLabel("range", topBar));
     mRangeCombo = new QComboBox(topBar);
     mRangeCombo->setMinimumWidth(100);
+    mRangeCombo->setStyleSheet(
+        "QComboBox { background-color: #000000; color: #e6e6e6;"
+        " border: 1px solid #3a3a3a; border-radius: 3px; padding: 2px 6px; }"
+        "QComboBox:hover { border-color: #6a6a6a; }"
+        "QComboBox::drop-down { subcontrol-origin: padding;"
+        " subcontrol-position: top right; width: 18px;"
+        " border-left: 1px solid #3a3a3a; }"
+        "QComboBox::down-arrow {"
+        " border-left: 4px solid transparent;"
+        " border-right: 4px solid transparent;"
+        " border-top: 5px solid #e6e6e6; }"
+        "QComboBox QAbstractItemView { background-color: #000000;"
+        " color: #e6e6e6; border: 1px solid #3a3a3a;"
+        " selection-background-color: #1f4e79;"
+        " selection-color: #ffffff; }");
     mRangeCombo->setToolTip("scope range limit (wheel / i, o keys also work)");
     for (int v = kRangeMinM; v <= kRangeMaxM; v += kRangeStepM) {
         mRangeCombo->addItem(QString::number(v) + " m", v);
