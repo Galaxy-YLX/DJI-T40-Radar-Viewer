@@ -64,5 +64,5 @@ private:
     QVector<SectorPoint> mPoints;
     HudState mHud;
     double mRangeLimit = 25.0;
-    double mPointRadius = 2.0;
+    double mPointRadius = 0.5;
 };

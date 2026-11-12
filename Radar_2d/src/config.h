@@ -10,7 +10,7 @@ struct Config {
     double offsetDeg = 180.0;       // azimuth offset (forward -> top)
     int minSnr = 0;                 // drop detections with SNR below this
     float minRangeM = 0.0f;         // drop detections closer than this (m)
-    double pointRadius = 2.0;       // blip radius (px)
+    double pointRadius = 0.5;       // blip radius (px)
     bool demo = false;              // synthetic points, no hardware
     bool dump = false;              // decode one frame as text and exit
 };

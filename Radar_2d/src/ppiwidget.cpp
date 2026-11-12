@@ -77,7 +77,7 @@ void PpiWidget::paintEvent(QPaintEvent *) {
     p.setFont(small);
     for (double d = 5.0; d <= mRangeLimit + 1e-6; d += 5.0) {
         const double rp = d / mRangeLimit * radiusPx;
-        p.setPen(QPen(kRing, 1, Qt::DotLine));
+        p.setPen(QPen(kRing, 1, Qt::SolidLine));
         p.drawEllipse(QPointF(cx, cy), rp, rp);
         p.setPen(kScale);
         p.drawText(QPointF(cx + rp + 3.0, cy), QString::number(int(d)) + "m");

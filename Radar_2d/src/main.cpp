@@ -23,7 +23,7 @@ static Config parseConfig(const QCoreApplication &app) {
          "180"},
         {"min-snr", "drop detections with SNR below this", "n", "0"},
         {"min-range", "drop detections closer than this (m)", "m", "0"},
-        {"point-size", "blip radius in pixels", "px", "2"},
+        {"point-size", "blip radius in pixels", "px", "0.5"},
         {"demo", "render synthetic points (no radar hardware)"},
         {"dump", "decode one frame as text and exit"},
     });

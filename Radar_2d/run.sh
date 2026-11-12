@@ -14,7 +14,7 @@
 #
 # Environment overrides:
 #   RADAR_IP (192.168.8.2)   CAN_IFACE (can0)
-#   RANGE (25)  POINT_SIZE (2)  AZIMUTH_OFFSET (180)  MIN_SNR (0)  MIN_RANGE (0)
+#   RANGE (25)  POINT_SIZE (0.5)  AZIMUTH_OFFSET (180)  MIN_SNR (0)  MIN_RANGE (0)
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,7 +23,7 @@ BIN=build/radar2d
 RADAR_IP="${RADAR_IP:-192.168.8.2}"
 CAN_IFACE="${CAN_IFACE:-can0}"
 RANGE="${RANGE:-25}"
-POINT_SIZE="${POINT_SIZE:-2}"
+POINT_SIZE="${POINT_SIZE:-0.5}"
 AZIMUTH_OFFSET="${AZIMUTH_OFFSET:-180}"
 MIN_SNR="${MIN_SNR:-0}"
 MIN_RANGE="${MIN_RANGE:-0}"

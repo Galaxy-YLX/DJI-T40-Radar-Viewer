@@ -100,8 +100,8 @@ def build_parser():
                    help='Drop detections closer than this in m (0 = raw)')
     p.add_argument('--interval', type=int, default=80,
                    help='GUI refresh interval in ms (default 80)')
-    p.add_argument('--point-size', type=float, default=10.0,
-                   help='Blip marker area (default 10). In the window use ] '
+    p.add_argument('--point-size', type=float, default=0.5,
+                   help='Blip marker area (default 0.5). In the window use ] '
                         'to enlarge and [ to shrink (also +/-)')
     p.add_argument('--print-points', type=int, default=0, metavar='N',
                    help='Print the first N raw points of every frame')
@@ -176,10 +176,10 @@ class RadarPPI:
         ax.set_facecolor('black')
         for sp in ax.spines.values():
             sp.set_color(GRID_GREEN)
-        ax.grid(color=GRID_GREEN, alpha=0.85, linestyle=':')
         ax.tick_params(colors=DIM_GREEN, labelsize=8)
 
         # Range rings: keep a readable set inside the current limit.
+        # _set_rticks() also applies the grid line styles.
         self._set_rticks(args.range_m)
         # Forward marker + label.
         ax.plot([0], [0], marker='^', color=GREEN, markersize=9,
@@ -212,12 +212,19 @@ class RadarPPI:
                                ha='center', va='center', fontsize=13,
                                color=GREEN, alpha=0.9)
         self.zoom = 1.0
-        self.point_size = max(1.0, float(args.point_size))
+        self.point_size = max(0.5, float(args.point_size))
         self.fig.canvas.mpl_connect('key_press_event', self._on_key)
 
     def _set_rticks(self, r):
         ticks = [t for t in (2, 5, 10, 15, 20, 25, 30, 40, 50) if t <= r]
         self.ax.set_rticks(ticks)
+        # set_rticks() rebuilds the gridlines, so styles must be applied
+        # afterwards: range rings (y grid) solid, bearing spokes (x grid)
+        # left dotted to keep them visually secondary.
+        self.ax.yaxis.grid(True, color=GRID_GREEN, alpha=0.85,
+                           linestyle='-', linewidth=0.8)
+        self.ax.xaxis.grid(True, color=GRID_GREEN, alpha=0.6,
+                           linestyle=':', linewidth=0.6)
 
     def _apply_zoom(self):
         r = self.args.range_m / self.zoom
@@ -245,7 +252,7 @@ class RadarPPI:
         else:
             return
         if key in (']', '+', '=', '[', '-'):
-            self.point_size = float(np.clip(self.point_size, 1.0, 400.0))
+            self.point_size = float(np.clip(self.point_size, 0.5, 400.0))
             print(f"[view] point size = {self.point_size:.1f} "
                   f"(] larger, [ smaller)", flush=True)
         else:
