@@ -210,7 +210,7 @@ void PpiWidget::drawHud(QPainter &p) {
     cell(col2, 0, "令牌", QString::number(h.token));
     cell(left, 1, "扇区", sectors);
     cell(col2, 1, "杂波", cfar);
-    cell(left, 2, "转子",
+    cell(left, 2, "转角",
          QString("%1/%2/%3").arg(h.rotA).arg(h.rotB).arg(h.rotC));
     cell(col2, 2, "回波", blips);
     cell(left, 3, "量程", QString::number(h.rangeM, 'f', 1) + "m");

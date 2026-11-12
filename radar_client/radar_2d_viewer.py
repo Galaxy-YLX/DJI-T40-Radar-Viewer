@@ -299,7 +299,7 @@ class RadarPPI:
                 f" 帧号    {frames:<9} 令牌    {str(fr.frame_token):<7}",
                 f" 扇区    {str(fr.sectors_decoded):<3}/360   "
                 f"杂波    {str(fr.cfar_error):<7}",
-                f" 转子    {fr.rot_angle_a}/{fr.rot_angle_b}/{fr.rot_angle_c}",
+                f" 转角    {fr.rot_angle_a}/{fr.rot_angle_b}/{fr.rot_angle_c}",
                 f" 回波    {len(pts):<9} 量程    {args.range_m / self.zoom:.1f} m",
                 f" 点径    {self.point_size:<9.1f} [ ] 点大小",
             ]

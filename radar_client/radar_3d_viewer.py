@@ -896,7 +896,7 @@ class PointCloud3D:
                 f" 帧号    {frames:<9} 令牌    {str(fr.frame_token):<7}",
                 f" 扇区    {str(fr.sectors_decoded):<3}/360   "
                 f"杂波    {str(fr.cfar_error):<7}",
-                f" 转子    {fr.rot_angle_a}/{fr.rot_angle_b}/{fr.rot_angle_c}",
+                f" 转角    {fr.rot_angle_a}/{fr.rot_angle_b}/{fr.rot_angle_c}",
                 f" 点数    {len(pts):<9} 滤波    {filter_tag}",
                 f" 着色    {colour_tag:<9} 点径    {self.point_size:.1f}",
                 " [ ] 点大小   i,o 缩放   滚轮 视角",
