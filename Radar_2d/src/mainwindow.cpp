@@ -61,7 +61,7 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
         " color: #00ff66; border: 1px solid #0b5c2c;"
         " selection-background-color: #0b3d20;"
         " selection-color: #00ff66; }");
-    mRangeCombo->setToolTip("显示量程（滚轮或 i / o 键调整）");
+    mRangeCombo->setToolTip("显示量程（i / o 键或下拉框调整）");
     for (int v = kRangeMinM; v <= kRangeMaxM; v += kRangeStepM) {
         mRangeCombo->addItem(QString::number(v) + " m", v);
     }

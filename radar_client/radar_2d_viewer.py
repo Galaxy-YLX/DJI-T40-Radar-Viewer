@@ -13,8 +13,7 @@ With no arguments this is a one-shot launcher: preflight -> FC stand-in
 client (drives the motor) -> deploy the side streamer -> 2D PPI view.
 
 Controls (matplotlib window):
-    mouse wheel ......... zoom in / out (range limit)
-    i / o ............... zoom in / out (keyboard fallback)
+    i / o ............... zoom in / out (range limit)
     ] / + ............... larger blips
     [ / - ............... smaller blips
 
@@ -215,7 +214,6 @@ class RadarPPI:
         self.zoom = 1.0
         self.point_size = max(1.0, float(args.point_size))
         self.fig.canvas.mpl_connect('key_press_event', self._on_key)
-        self.fig.canvas.mpl_connect('scroll_event', self._on_scroll)
 
     def _set_rticks(self, r):
         ticks = [t for t in (2, 5, 10, 15, 20, 25, 30, 40, 50) if t <= r]
@@ -233,14 +231,6 @@ class RadarPPI:
     def _zoom(self, factor):
         self.zoom = float(np.clip(self.zoom * factor, 0.2, 4.0))
         self._apply_zoom()
-
-    def _on_scroll(self, event):
-        if getattr(event, 'inaxes', None) is not self.ax:
-            return
-        btn = event.button
-        zoom_in = btn == 'up' if isinstance(btn, str) else (btn is not None
-                                                            and btn > 0)
-        self._zoom(1.1 if zoom_in else 1.0 / 1.1)
 
     def _on_key(self, event):
         key = event.key or ''
@@ -260,7 +250,7 @@ class RadarPPI:
                   f"(] larger, [ smaller)", flush=True)
         else:
             print(f"[view] range = {self.args.range_m / self.zoom:.1f}m "
-                  f"(i in, o out, wheel to zoom)", flush=True)
+                  f"(i in, o out)", flush=True)
 
     def update(self, fr, pts, frames, fps, error=None):
         args = self.args

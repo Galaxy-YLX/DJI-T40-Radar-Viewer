@@ -3,7 +3,6 @@
 #include <QKeyEvent>
 #include <QPainter>
 #include <QPaintEvent>
-#include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
 
@@ -220,18 +219,8 @@ void PpiWidget::drawHud(QPainter &p) {
     p.setFont(small);
     p.setPen(kPhosphorDim);
     p.drawText(QPointF(left, ruleY + 6.0 + fm.ascent() + 4.0 * rowH + 2.0),
-               "滚轮 / i,o  缩放      [ ]  点大小");
+               "i / o 键  缩放      [ ]  点大小");
     p.restore();
-}
-
-void PpiWidget::wheelEvent(QWheelEvent *ev) {
-    const double steps = ev->angleDelta().y() / 120.0;
-    if (steps > 0) {
-        setRangeLimit(mRangeLimit / 1.1);
-    } else if (steps < 0) {
-        setRangeLimit(mRangeLimit * 1.1);
-    }
-    ev->accept();
 }
 
 void PpiWidget::keyPressEvent(QKeyEvent *ev) {

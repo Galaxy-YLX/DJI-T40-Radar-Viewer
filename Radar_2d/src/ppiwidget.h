@@ -55,7 +55,6 @@ signals:
 
 protected:
     void paintEvent(QPaintEvent *ev) override;
-    void wheelEvent(QWheelEvent *ev) override;
     void keyPressEvent(QKeyEvent *ev) override;
 
 private:
