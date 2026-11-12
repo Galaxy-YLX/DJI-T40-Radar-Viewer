@@ -1,10 +1,11 @@
 #include "mainwindow.h"
 
-#include <QHBoxLayout>
+#include <QComboBox>
 #include <QLabel>
-#include <QSlider>
 #include <QTimer>
+#include <QToolBar>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cmath>
 
 #include "ppiwidget.h"
@@ -12,6 +13,9 @@
 
 namespace {
 constexpr double kPi = 3.14159265358979323846;
+constexpr int kRangeMinM = 5;
+constexpr int kRangeMaxM = 50;
+constexpr int kRangeStepM = 5;
 }
 
 MainWindow::MainWindow(const Config &cfg, QWidget *parent)
@@ -22,46 +26,41 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mPpi = new PpiWidget(this);
     mPpi->setPointRadius(cfg.pointRadius);
 
+    auto *topBar = new QToolBar("Range", this);
+    topBar->setMovable(false);
+    topBar->setFloatable(false);
+    topBar->setStyleSheet(
+        "QToolBar { background: #000000; border: none; }"
+        "QToolBar QLabel { color: #e6e6e6; }");
+    addToolBar(Qt::TopToolBarArea, topBar);
+
+    topBar->addWidget(new QLabel("range", topBar));
+    mRangeCombo = new QComboBox(topBar);
+    mRangeCombo->setMinimumWidth(100);
+    mRangeCombo->setToolTip("scope range limit (wheel / i, o keys also work)");
+    for (int v = kRangeMinM; v <= kRangeMaxM; v += kRangeStepM) {
+        mRangeCombo->addItem(QString::number(v) + " m", v);
+    }
+    topBar->addWidget(mRangeCombo);
+
     auto *central = new QWidget(this);
     auto *vbox = new QVBoxLayout(central);
     vbox->setContentsMargins(0, 0, 0, 0);
     vbox->setSpacing(0);
     vbox->addWidget(mPpi, 1);
-
-    auto *hbar = new QHBoxLayout();
-    hbar->setContentsMargins(8, 4, 8, 8);
-    auto *rangeLbl = new QLabel("range", central);
-    mRangeSlider = new QSlider(Qt::Horizontal, central);
-    mRangeSlider->setRange(5, 50);
-    mRangeSlider->setValue(int(cfg.rangeM));
-    mRangeSlider->setTickInterval(5);
-    mRangeSlider->setTickPosition(QSlider::TicksBelow);
-    mRangeValue = new QLabel(central);
-    mRangeValue->setMinimumWidth(42);
-    mRangeValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    hbar->addWidget(rangeLbl);
-    hbar->addWidget(mRangeSlider, 1);
-    hbar->addWidget(mRangeValue);
-    vbox->addLayout(hbar);
-
     setCentralWidget(central);
 
     mPpi->setRangeLimit(cfg.rangeM);
-    updateRangeLabel(int(cfg.rangeM));
+    syncRangeCombo(mPpi->rangeLimit());
 
-    connect(mRangeSlider, &QSlider::valueChanged, this, [this](int v) {
-        mPpi->setRangeLimit(v);
-        updateRangeLabel(v);
-    });
-    connect(mPpi, &PpiWidget::rangeChanged, this, [this](double m) {
-        const int v = int(m + 0.5);
-        if (mRangeSlider->value() != v) {
-            mRangeSlider->blockSignals(true);
-            mRangeSlider->setValue(v);
-            mRangeSlider->blockSignals(false);
+    connect(mRangeCombo, &QComboBox::activated, this, [this](int idx) {
+        const QVariant v = mRangeCombo->itemData(idx);
+        if (v.isValid()) {
+            mPpi->setRangeLimit(v.toInt());
         }
-        updateRangeLabel(v);
     });
+    connect(mPpi, &PpiWidget::rangeChanged, this,
+            &MainWindow::syncRangeCombo);
 
     mClock.start();
     if (cfg.demo) {
@@ -77,8 +76,28 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     }
 }
 
-void MainWindow::updateRangeLabel(int v) {
-    mRangeValue->setText(QString::number(v) + " m");
+void MainWindow::syncRangeCombo(double m) {
+    const int nearest = std::clamp(
+        int(std::lround(m / kRangeStepM)) * kRangeStepM, kRangeMinM, kRangeMaxM);
+    const int idx = std::abs(m - nearest) < 0.05
+                        ? mRangeCombo->findData(nearest) : -1;
+    const int last = mRangeCombo->count() - 1;
+    if (idx >= 0) {
+        if (mCustomRangeItem) {
+            mRangeCombo->removeItem(last);
+            mCustomRangeItem = false;
+        }
+        mRangeCombo->setCurrentIndex(idx);
+        return;
+    }
+    const QString text = QString::number(m, 'f', 1) + " m";
+    if (mCustomRangeItem) {
+        mRangeCombo->setItemText(last, text);
+    } else {
+        mRangeCombo->addItem(text);
+        mCustomRangeItem = true;
+    }
+    mRangeCombo->setCurrentIndex(mRangeCombo->count() - 1);
 }
 
 void MainWindow::applyFrame(const SideFrame &fr, const QString &header) {

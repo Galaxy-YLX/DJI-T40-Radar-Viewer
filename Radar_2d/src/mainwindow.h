@@ -9,8 +9,7 @@ class PpiWidget;
 class SideStream;
 struct SideFrame;
 class QTimer;
-class QSlider;
-class QLabel;
+class QComboBox;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -23,13 +22,13 @@ private slots:
 
 private:
     void applyFrame(const SideFrame &fr, const QString &header);
-    void updateRangeLabel(int v);
+    void syncRangeCombo(double m);
 
     PpiWidget *mPpi;
     SideStream *mStream = nullptr;
     QTimer *mDemoTimer = nullptr;
-    QSlider *mRangeSlider = nullptr;
-    QLabel *mRangeValue = nullptr;
+    QComboBox *mRangeCombo = nullptr;
+    bool mCustomRangeItem = false;
     QElapsedTimer mClock;
     int mFrames = 0;
     int mDemoN = 0;
