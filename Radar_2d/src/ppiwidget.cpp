@@ -207,7 +207,7 @@ void PpiWidget::drawHud(QPainter &p) {
         + ((h.live && h.blips == 0) ? "!" : "");
 
     cell(left, 0, "帧号", QString::number(h.frames));
-    cell(col2, 0, "令牌", QString::number(h.token));
+    cell(col2, 0, "帧序号", QString::number(h.token));
     cell(left, 1, "扇区", sectors);
     cell(col2, 1, "杂波", cfar);
     cell(left, 2, "转角",

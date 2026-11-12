@@ -296,7 +296,7 @@ class RadarPPI:
             lines = [
                 f"[ T40雷达 ]         [ {tag} ] {fps:5.1f} Hz",
                 "----------------------------------------------",
-                f" 帧号    {frames:<9} 令牌    {str(fr.frame_token):<7}",
+                f" 帧号    {frames:<9} 帧序号  {str(fr.frame_token):<7}",
                 f" 扇区    {str(fr.sectors_decoded):<3}/360   "
                 f"杂波    {str(fr.cfar_error):<7}",
                 f" 转角    {fr.rot_angle_a}/{fr.rot_angle_b}/{fr.rot_angle_c}",
