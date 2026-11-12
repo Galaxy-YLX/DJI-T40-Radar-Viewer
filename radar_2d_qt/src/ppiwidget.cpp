@@ -47,6 +47,7 @@ void PpiWidget::setStatusText(const QString &text) {
 
 void PpiWidget::setRangeLimit(double m) {
     mRangeLimit = std::clamp(m, 5.0, 50.0);
+    emit rangeChanged(mRangeLimit);
     update();
 }
 

@@ -21,6 +21,9 @@ public:
     void setRangeLimit(double m);
     void setPointRadius(double px);
 
+signals:
+    void rangeChanged(double m);
+
 protected:
     void paintEvent(QPaintEvent *ev) override;
     void wheelEvent(QWheelEvent *ev) override;

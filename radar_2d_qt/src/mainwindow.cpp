@@ -1,7 +1,10 @@
 #include "mainwindow.h"
 
-#include <QStatusBar>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QSlider>
 #include <QTimer>
+#include <QVBoxLayout>
 #include <cmath>
 
 #include "ppiwidget.h"
@@ -14,13 +17,51 @@ constexpr double kPi = 3.14159265358979323846;
 MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     : QMainWindow(parent), mOffsetDeg(cfg.offsetDeg) {
     setWindowTitle("DJI T40 — 2D radar (Qt6)");
-    resize(720, 720);
+    resize(720, 780);
 
     mPpi = new PpiWidget(this);
-    mPpi->setRangeLimit(cfg.rangeM);
     mPpi->setPointRadius(cfg.pointRadius);
-    setCentralWidget(mPpi);
-    statusBar()->showMessage("waiting for SIDE frames (UDP 9877) ...");
+
+    auto *central = new QWidget(this);
+    auto *vbox = new QVBoxLayout(central);
+    vbox->setContentsMargins(0, 0, 0, 0);
+    vbox->setSpacing(0);
+    vbox->addWidget(mPpi, 1);
+
+    auto *hbar = new QHBoxLayout();
+    hbar->setContentsMargins(8, 4, 8, 8);
+    auto *rangeLbl = new QLabel("range", central);
+    mRangeSlider = new QSlider(Qt::Horizontal, central);
+    mRangeSlider->setRange(5, 50);
+    mRangeSlider->setValue(int(cfg.rangeM));
+    mRangeSlider->setTickInterval(5);
+    mRangeSlider->setTickPosition(QSlider::TicksBelow);
+    mRangeValue = new QLabel(central);
+    mRangeValue->setMinimumWidth(42);
+    mRangeValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    hbar->addWidget(rangeLbl);
+    hbar->addWidget(mRangeSlider, 1);
+    hbar->addWidget(mRangeValue);
+    vbox->addLayout(hbar);
+
+    setCentralWidget(central);
+
+    mPpi->setRangeLimit(cfg.rangeM);
+    updateRangeLabel(int(cfg.rangeM));
+
+    connect(mRangeSlider, &QSlider::valueChanged, this, [this](int v) {
+        mPpi->setRangeLimit(v);
+        updateRangeLabel(v);
+    });
+    connect(mPpi, &PpiWidget::rangeChanged, this, [this](double m) {
+        const int v = int(m + 0.5);
+        if (mRangeSlider->value() != v) {
+            mRangeSlider->blockSignals(true);
+            mRangeSlider->setValue(v);
+            mRangeSlider->blockSignals(false);
+        }
+        updateRangeLabel(v);
+    });
 
     mClock.start();
     if (cfg.demo) {
@@ -36,6 +77,10 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     }
 }
 
+void MainWindow::updateRangeLabel(int v) {
+    mRangeValue->setText(QString::number(v) + " m");
+}
+
 void MainWindow::applyFrame(const SideFrame &fr, const QString &header) {
     mFrames++;
     const double fps = mFrames / (mClock.elapsed() / 1000.0);
@@ -48,7 +93,6 @@ void MainWindow::applyFrame(const SideFrame &fr, const QString &header) {
             .arg(mPpi->rangeLimit(), 0, 'f', 1)
             .arg(mPpi->pointRadius(), 0, 'f', 1);
     mPpi->setStatusText(header + "\n" + body);
-    statusBar()->showMessage(header);
 }
 
 void MainWindow::onFrameReady() {

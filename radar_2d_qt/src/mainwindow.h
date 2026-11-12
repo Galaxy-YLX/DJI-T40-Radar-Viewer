@@ -9,6 +9,8 @@ class PpiWidget;
 class SideStream;
 struct SideFrame;
 class QTimer;
+class QSlider;
+class QLabel;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -21,10 +23,13 @@ private slots:
 
 private:
     void applyFrame(const SideFrame &fr, const QString &header);
+    void updateRangeLabel(int v);
 
     PpiWidget *mPpi;
     SideStream *mStream = nullptr;
     QTimer *mDemoTimer = nullptr;
+    QSlider *mRangeSlider = nullptr;
+    QLabel *mRangeValue = nullptr;
     QElapsedTimer mClock;
     int mFrames = 0;
     int mDemoN = 0;
