@@ -1143,8 +1143,12 @@ class LivePlotter:
         self.rti_fps_times.append(time.monotonic())
         self.last_update_wall = time.time()
 
+    @staticmethod
+    def _fps_is_stale(times: deque[float]) -> bool:
+        return len(times) < 2 or time.monotonic() - times[-1] > 0.5
+
     def _rti_fps(self) -> float:
-        if len(self.rti_fps_times) < 2:
+        if self._fps_is_stale(self.rti_fps_times):
             return 0.0
         span = self.rti_fps_times[-1] - self.rti_fps_times[0]
         return (len(self.rti_fps_times) - 1) / span if span > 0 else 0.0
@@ -1156,7 +1160,7 @@ class LivePlotter:
                 queue.popleft()
 
     def _frame_rate(self) -> float:
-        if len(self.arrival_times) < 2:
+        if self._fps_is_stale(self.arrival_times):
             return 0.0
         span = self.arrival_times[-1] - self.arrival_times[0]
         if span <= 0.0:
@@ -1622,7 +1626,7 @@ class LivePlotter:
         # Info panel
         info_lines = [
             f"RTI frames: {self.rti_frame_count}",
-            f"RTI fps: {self._rti_fps():.1f}",
+            f"RTI fps: {self._rti_fps():5.1f} Hz",
             f"history depth: {self.rti_history_len}",
             f"bins: 256 (FFT magnitude)",
         ]
@@ -1819,7 +1823,7 @@ class LivePlotter:
         stable_count = len(self._extract_stable_reflectors(bin_size=0.5))
         info_lines = [
             f"last seq: {self.last_seq if self.last_seq is not None else 'n/a'}",
-            f"1E61 fps: {self._frame_rate():.1f}",
+            f"1E61 fps: {self._frame_rate():5.1f} Hz",
             f"latest payload_len: {self.last_payload_len}",
             f"latest counts: gnd={counts[0]} wire={counts[1]} pcla={counts[2]}",
             f"empty 1E61 streak: {self.empty_1e61_streak}",

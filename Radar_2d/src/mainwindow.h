@@ -2,6 +2,8 @@
 
 #include <QElapsedTimer>
 #include <QMainWindow>
+#include <QString>
+#include <deque>
 
 #include "config.h"
 
@@ -19,6 +21,7 @@ public:
 private slots:
     void onFrameReady();
     void onDemoTick();
+    void refreshHud();
 
 private:
     void applyFrame(const SideFrame &fr, const QString &header);
@@ -27,9 +30,14 @@ private:
     PpiWidget *mPpi;
     SideStream *mStream = nullptr;
     QTimer *mDemoTimer = nullptr;
+    QTimer *mHudTimer = nullptr;
     QComboBox *mRangeCombo = nullptr;
     bool mCustomRangeItem = false;
     QElapsedTimer mClock;
+    std::deque<qint64> mFrameTimes;
+    QString mHeader;
+    QString mLastStatus;
+    int mLastBlips = 0;
     int mFrames = 0;
     int mDemoN = 0;
     double mOffsetDeg;

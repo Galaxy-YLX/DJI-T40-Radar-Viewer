@@ -16,6 +16,9 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr int kRangeMinM = 5;
 constexpr int kRangeMaxM = 50;
 constexpr int kRangeStepM = 5;
+constexpr int kFpsWindowMs = 2000;  // sliding window for the instant frame rate
+constexpr int kFpsStaleMs = 500;    // no frame this long -> 0 Hz
+constexpr int kHudRefreshMs = 200;  // status text refresh, decoupled from frames
 }
 
 MainWindow::MainWindow(const Config &cfg, QWidget *parent)
@@ -78,6 +81,9 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
             &MainWindow::syncRangeCombo);
 
     mClock.start();
+    mHudTimer = new QTimer(this);
+    connect(mHudTimer, &QTimer::timeout, this, &MainWindow::refreshHud);
+    mHudTimer->start(kHudRefreshMs);
     if (cfg.demo) {
         mDemoTimer = new QTimer(this);
         connect(mDemoTimer, &QTimer::timeout, this, &MainWindow::onDemoTick);
@@ -117,27 +123,50 @@ void MainWindow::syncRangeCombo(double m) {
 
 void MainWindow::applyFrame(const SideFrame &fr, const QString &header) {
     mFrames++;
-    const double fps = mFrames / (mClock.elapsed() / 1000.0);
+    mFrameTimes.push_back(mClock.elapsed());
+    mHeader = header;
+    mLastBlips = int(fr.points.size());
     mPpi->setFrame(fr);
-    const QString body =
-        QString("blips=%1  frames=%2  fps=%3  range=%4m  size=%5 ([/])")
-            .arg(fr.points.size())
-            .arg(mFrames)
-            .arg(fps, 0, 'f', 1)
-            .arg(mPpi->rangeLimit(), 0, 'f', 1)
-            .arg(mPpi->pointRadius(), 0, 'f', 1);
-    mPpi->setStatusText(header + "\n" + body);
+}
+
+void MainWindow::refreshHud() {
+    const qint64 now = mClock.elapsed();
+    while (!mFrameTimes.empty() && mFrameTimes.front() < now - kFpsWindowMs) {
+        mFrameTimes.pop_front();
+    }
+    double fps = 0.0;
+    if (mFrameTimes.size() >= 2 && now - mFrameTimes.back() <= kFpsStaleMs) {
+        const double span =
+            double(mFrameTimes.back() - mFrameTimes.front()) / 1000.0;
+        if (span > 0.0) {
+            fps = double(mFrameTimes.size() - 1) / span;
+        }
+    }
+    const QString text =
+        mHeader.isEmpty()
+            ? QString("waiting for SIDE frames (UDP 9877) ...")
+            : mHeader + "\n" +
+                  QString("blips=%1  frames=%2  fps=%3Hz  range=%4m  size=%5 ([/])")
+                      .arg(mLastBlips, 4)
+                      .arg(mFrames, 6)
+                      .arg(fps, 5, 'f', 1)
+                      .arg(mPpi->rangeLimit(), 0, 'f', 1)
+                      .arg(mPpi->pointRadius(), 0, 'f', 1);
+    if (text != mLastStatus) {
+        mLastStatus = text;
+        mPpi->setStatusText(text);
+    }
 }
 
 void MainWindow::onFrameReady() {
-    applyFrame(mStream->latest(), QString("token=%1  sectors=%2  "
-                                          "rot=%3/%4/%5  cfar=%6")
-                                     .arg(mStream->latest().frameToken)
-                                     .arg(mStream->latest().sectorsDecoded)
-                                     .arg(mStream->latest().rotAngleA)
-                                     .arg(mStream->latest().rotAngleB)
-                                     .arg(mStream->latest().rotAngleC)
-                                     .arg(mStream->latest().cfarError));
+    const SideFrame &fr = mStream->latest();
+    applyFrame(fr, QString("token=%1  sectors=%2  rot=%3/%4/%5  cfar=%6")
+                       .arg(fr.frameToken)
+                       .arg(fr.sectorsDecoded)
+                       .arg(fr.rotAngleA)
+                       .arg(fr.rotAngleB)
+                       .arg(fr.rotAngleC)
+                       .arg(fr.cfarError));
 }
 
 void MainWindow::onDemoTick() {

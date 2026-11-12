@@ -271,8 +271,8 @@ class RadarPPI:
             head = (f"token={fr.frame_token}  sectors={fr.sectors_decoded}  "
                     f"rot_angle={fr.rot_angle_a}/{fr.rot_angle_b}/"
                     f"{fr.rot_angle_c}  cfar_error={fr.cfar_error}")
-            body = (f"blips={len(pts):4d}  frames={frames}  "
-                    f"fps={fps:4.1f}  range={args.range_m / self.zoom:.1f}m  "
+            body = (f"blips={len(pts):4d}  frames={frames:<6d}  "
+                    f"fps={fps:5.1f}Hz  range={args.range_m / self.zoom:.1f}m  "
                     f"size={self.point_size:.1f} ([/])")
             if not pts:
                 self.warning.set_text(
@@ -356,14 +356,14 @@ def decode_sector_points(fr, args):
 def run_demo(args):
     print("[demo] synthetic 2D PPI — no radar hardware needed")
     scene = RadarPPI(args)
-    t0 = time.monotonic()
+    meter = rv.FrameRateMeter()
     counter = [0]
 
     def tick(_):
         counter[0] += 1
         n = counter[0]
         fr, pts = demo_frame(n), demo_points(n)
-        fps = n / max(time.monotonic() - t0, 1e-6)
+        fps = meter.mark()
         emit_frame(args, fr, pts, n, fps)
         return scene.update(fr, pts, n, fps)
 
@@ -424,7 +424,7 @@ def run(args):
 
         scene = RadarPPI(args)
         state = {'fr': None, 'pts': [], 'error': None, 'frames': 0,
-                 'fps': 0.0, 't0': time.monotonic()}
+                 'meter': rv.FrameRateMeter()}
 
         def tick(_):
             raw = reader.try_read_frame()
@@ -434,15 +434,15 @@ def run(args):
                     pts = decode_sector_points(fr, args)
                     state.update(fr=fr, pts=pts, error=None)
                     state['frames'] += 1
-                    elapsed = time.monotonic() - state['t0']
-                    state['fps'] = (state['frames'] / elapsed
-                                    if elapsed > 0 else 0.0)
-                    emit_frame(args, fr, pts, state['frames'], state['fps'])
+                    fps = state['meter'].mark()
+                    emit_frame(args, fr, pts, state['frames'], fps)
                 except Exception as exc:
                     state['error'] = str(exc)
                     print(f"[err] frame decode failed: {exc}", flush=True)
+            # Recomputed every tick so a stalled stream decays to 0 Hz.
+            fps = state['meter'].rate()
             return scene.update(state['fr'], state['pts'], state['frames'],
-                                state['fps'], error=state['error'])
+                                fps, error=state['error'])
 
         from matplotlib.animation import FuncAnimation
         scene.ani = FuncAnimation(scene.fig, tick, interval=args.interval,

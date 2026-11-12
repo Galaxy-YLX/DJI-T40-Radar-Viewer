@@ -856,7 +856,8 @@ class PointCloud3D:
                     f"rot_angle={fr.rot_angle_a}/{fr.rot_angle_b}/"
                     f"{fr.rot_angle_c}  cfar_error={fr.cfar_error}")
             colour_tag = 'GREEN' if not self.use_cmap else args.color_by
-            body = (f"raw_pts={len(pts):4d}  frames={frames}  fps={fps:4.1f}  "
+            body = (f"raw_pts={len(pts):4d}  frames={frames:<6d}  "
+                    f"fps={fps:5.1f}Hz  "
                     f"filter={'off (RAW)' if args.persist_min_hits == 0 else 'on'}  "
                     f"color={colour_tag}  size={self.point_size:.1f} ([/])")
             if diag:
@@ -899,14 +900,14 @@ def run_demo(args):
             print(f"demo points: {len(pts)}")
             return
         scene = PointCloud3D(args)
-        t0 = time.monotonic()
+        meter = rv.FrameRateMeter()
         counter = [0]
 
         def tick(_):
             counter[0] += 1
             n = counter[0]
             fr, pts = demo_frame(n), demo_points(n)
-            fps = n / max(time.monotonic() - t0, 1e-6)
+            fps = meter.mark()
             emit_frame(args, exporter, fr, pts, n, fps)
             return scene.update(fr, pts, [], n, fps)
 
@@ -1007,8 +1008,8 @@ def run(args):
 
         scene = PointCloud3D(args)
         state = {'fr': None, 'pts': [], 'hits': [], 'diag': None,
-                 'error': None, 'frames': 0, 'fps': 0.0,
-                 't0': time.monotonic()}
+                 'error': None, 'frames': 0,
+                 'meter': rv.FrameRateMeter()}
 
         def tick(_):
             result = pull_frame(source, args, persistence)
@@ -1018,15 +1019,16 @@ def run(args):
                     state.update(fr=fr, pts=pts, hits=hits, diag=diag,
                                  error=None)
                     state['frames'] += 1
-                    elapsed = time.monotonic() - state['t0']
-                    state['fps'] = state['frames'] / elapsed if elapsed > 0 else 0.0
+                    fps = state['meter'].mark()
                     emit_frame(args, exporter, fr, pts,
-                               state['frames'], state['fps'], diag=diag)
+                               state['frames'], fps, diag=diag)
                 except Exception as exc:
                     state['error'] = str(exc)
                     print(f"[err] frame decode failed: {exc}", flush=True)
+            # Recomputed every tick so a stalled stream decays to 0 Hz.
+            fps = state['meter'].rate()
             return scene.update(state['fr'], state['pts'], state['hits'],
-                                state['frames'], state['fps'],
+                                state['frames'], fps,
                                 error=state['error'], diag=state['diag'])
 
         from matplotlib.animation import FuncAnimation

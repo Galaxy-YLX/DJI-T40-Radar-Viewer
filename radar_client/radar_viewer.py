@@ -44,6 +44,39 @@ import numpy as np
 import paramiko
 
 
+class FrameRateMeter:
+    """Sliding-window frame rate (Hz) for the viewers' status text.
+
+    A lifetime average (frames / elapsed) keeps drifting long after the
+    stream changed or stopped. Keep arrival times for the last ``window``
+    seconds instead and recompute on every display tick, so the number
+    reflects the current stream and falls back to 0 after ``stale``
+    seconds without a frame.
+    """
+
+    def __init__(self, window: float = 2.0, stale: float = 0.5) -> None:
+        self.window = window
+        self.stale = stale
+        self._times: deque[float] = deque(maxlen=1024)
+
+    def mark(self, now: float | None = None) -> float:
+        """Record one frame and return the resulting rate."""
+        t = time.monotonic() if now is None else now
+        self._times.append(t)
+        return self.rate(t)
+
+    def rate(self, now: float | None = None) -> float:
+        """Current rate; 0.0 until two frames exist or the stream is stale."""
+        t = time.monotonic() if now is None else now
+        cutoff = t - self.window
+        while self._times and self._times[0] < cutoff:
+            self._times.popleft()
+        if len(self._times) < 2 or t - self._times[-1] > self.stale:
+            return 0.0
+        span = self._times[-1] - self._times[0]
+        return (len(self._times) - 1) / span if span > 0 else 0.0
+
+
 def _enable_legacy_ssh_rsa():
     """Accept the radar's dropbear 2014.63 host key (ssh-rsa / SHA-1).
 
@@ -917,7 +950,7 @@ def run_both_viewer(top_reader: UDPStreamReader,
 
     # State
     top_count = [0]; side_count = [0]
-    t_start = [time.time()]
+    top_meter = FrameRateMeter(); side_meter = FrameRateMeter()
     last_top_hash = [None];  top_change_times  = deque(maxlen=20)
     last_side_key = [None];  side_change_times = deque(maxlen=20)
     last_top_frame  = [init_top]
@@ -940,6 +973,7 @@ def run_both_viewer(top_reader: UDPStreamReader,
             try:
                 last_top_frame[0] = parse_top_frame(top_raw)
                 top_count[0] += 1
+                top_meter.mark()
                 h = hash(last_top_frame[0][0].tobytes())
                 if h != last_top_hash[0]:
                     top_change_times.append(now_wall); last_top_hash[0] = h
@@ -950,6 +984,7 @@ def run_both_viewer(top_reader: UDPStreamReader,
             try:
                 last_side_frame[0] = SideFrame(side_raw)
                 side_count[0] += 1
+                side_meter.mark()
                 got_new_side[0] = True
                 fr = last_side_frame[0]
                 key = (fr.frame_token, fr.sectors_decoded, fr.point_count_total)
@@ -1075,9 +1110,8 @@ def run_both_viewer(top_reader: UDPStreamReader,
             side_peak_text.set_text('\n'.join(srows))
 
         # ═══ Stats strip ═══
-        elapsed = max(now_wall - t_start[0], 0.01)
-        top_fps  = top_count[0]  / elapsed
-        side_fps = side_count[0] / elapsed
+        top_fps  = top_meter.rate()
+        side_fps = side_meter.rate()
         th = _radar_health_tag(top_change_times,  top_count[0], now_wall)
         sh_ = _radar_health_tag(side_change_times, side_count[0], now_wall)
         status_text_top.set_text(
