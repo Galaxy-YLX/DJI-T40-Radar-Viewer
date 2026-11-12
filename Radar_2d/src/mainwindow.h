@@ -6,10 +6,9 @@
 #include <deque>
 
 #include "config.h"
+#include "ppiwidget.h"
 
-class PpiWidget;
 class SideStream;
-struct SideFrame;
 class QTimer;
 class QComboBox;
 
@@ -24,7 +23,7 @@ private slots:
     void refreshHud();
 
 private:
-    void applyFrame(const SideFrame &fr, const QString &header);
+    void applyFrame(const SideFrame &fr);
     void syncRangeCombo(double m);
 
     PpiWidget *mPpi;
@@ -33,11 +32,10 @@ private:
     QTimer *mHudTimer = nullptr;
     QComboBox *mRangeCombo = nullptr;
     bool mCustomRangeItem = false;
+    bool mDemoMode = false;
     QElapsedTimer mClock;
     std::deque<qint64> mFrameTimes;
-    QString mHeader;
-    QString mLastStatus;
-    int mLastBlips = 0;
+    HudState mHud;
     int mFrames = 0;
     int mDemoN = 0;
     double mOffsetDeg;

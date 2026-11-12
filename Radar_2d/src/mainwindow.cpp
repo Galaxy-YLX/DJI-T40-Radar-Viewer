@@ -28,33 +28,39 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
 
     mPpi = new PpiWidget(this);
     mPpi->setPointRadius(cfg.pointRadius);
+    mDemoMode = cfg.demo;
+    mHud.rangeM = cfg.rangeM;
+    mHud.pointRadius = cfg.pointRadius;
+    mPpi->setHud(mHud);
 
     auto *topBar = new QToolBar("Range", this);
     topBar->setMovable(false);
     topBar->setFloatable(false);
     topBar->setStyleSheet(
-        "QToolBar { background: #000000; border: none; }"
-        "QToolBar QLabel { color: #e6e6e6; }");
+        "QToolBar { background: #000000; border: none;"
+        " font-family: monospace; }"
+        "QToolBar QLabel { color: #00ff66; }");
     addToolBar(Qt::TopToolBarArea, topBar);
 
     topBar->addWidget(new QLabel("range", topBar));
     mRangeCombo = new QComboBox(topBar);
     mRangeCombo->setMinimumWidth(100);
     mRangeCombo->setStyleSheet(
-        "QComboBox { background-color: #000000; color: #e6e6e6;"
-        " border: 1px solid #3a3a3a; border-radius: 3px; padding: 2px 6px; }"
-        "QComboBox:hover { border-color: #6a6a6a; }"
+        "QComboBox { background-color: #000000; color: #00ff66;"
+        " border: 1px solid #0b5c2c; padding: 2px 6px;"
+        " font-family: monospace; }"
+        "QComboBox:hover { border-color: #00ff66; }"
         "QComboBox::drop-down { subcontrol-origin: padding;"
         " subcontrol-position: top right; width: 18px;"
-        " border-left: 1px solid #3a3a3a; }"
+        " border-left: 1px solid #0b5c2c; }"
         "QComboBox::down-arrow {"
         " border-left: 4px solid transparent;"
         " border-right: 4px solid transparent;"
-        " border-top: 5px solid #e6e6e6; }"
+        " border-top: 5px solid #00ff66; }"
         "QComboBox QAbstractItemView { background-color: #000000;"
-        " color: #e6e6e6; border: 1px solid #3a3a3a;"
-        " selection-background-color: #1f4e79;"
-        " selection-color: #ffffff; }");
+        " color: #00ff66; border: 1px solid #0b5c2c;"
+        " selection-background-color: #0b3d20;"
+        " selection-color: #00ff66; }");
     mRangeCombo->setToolTip("scope range limit (wheel / i, o keys also work)");
     for (int v = kRangeMinM; v <= kRangeMaxM; v += kRangeStepM) {
         mRangeCombo->addItem(QString::number(v) + " m", v);
@@ -121,11 +127,16 @@ void MainWindow::syncRangeCombo(double m) {
     mRangeCombo->setCurrentIndex(mRangeCombo->count() - 1);
 }
 
-void MainWindow::applyFrame(const SideFrame &fr, const QString &header) {
+void MainWindow::applyFrame(const SideFrame &fr) {
     mFrames++;
     mFrameTimes.push_back(mClock.elapsed());
-    mHeader = header;
-    mLastBlips = int(fr.points.size());
+    mHud.token = fr.frameToken;
+    mHud.sectors = fr.sectorsDecoded;
+    mHud.rotA = fr.rotAngleA;
+    mHud.rotB = fr.rotAngleB;
+    mHud.rotC = fr.rotAngleC;
+    mHud.cfarError = fr.cfarError;
+    mHud.blips = int(fr.points.size());
     mPpi->setFrame(fr);
 }
 
@@ -142,31 +153,17 @@ void MainWindow::refreshHud() {
             fps = double(mFrameTimes.size() - 1) / span;
         }
     }
-    const QString text =
-        mHeader.isEmpty()
-            ? QString("waiting for SIDE frames (UDP 9877) ...")
-            : mHeader + "\n" +
-                  QString("blips=%1  frames=%2  fps=%3Hz  range=%4m  size=%5 ([/])")
-                      .arg(mLastBlips, 4)
-                      .arg(mFrames, 6)
-                      .arg(fps, 5, 'f', 1)
-                      .arg(mPpi->rangeLimit(), 0, 'f', 1)
-                      .arg(mPpi->pointRadius(), 0, 'f', 1);
-    if (text != mLastStatus) {
-        mLastStatus = text;
-        mPpi->setStatusText(text);
-    }
+    mHud.live = mFrames > 0;
+    mHud.demo = mDemoMode;
+    mHud.fps = std::round(fps * 10.0) / 10.0;
+    mHud.frames = mFrames;
+    mHud.rangeM = mPpi->rangeLimit();
+    mHud.pointRadius = mPpi->pointRadius();
+    mPpi->setHud(mHud);
 }
 
 void MainWindow::onFrameReady() {
-    const SideFrame &fr = mStream->latest();
-    applyFrame(fr, QString("token=%1  sectors=%2  rot=%3/%4/%5  cfar=%6")
-                       .arg(fr.frameToken)
-                       .arg(fr.sectorsDecoded)
-                       .arg(fr.rotAngleA)
-                       .arg(fr.rotAngleB)
-                       .arg(fr.rotAngleC)
-                       .arg(fr.cfarError));
+    applyFrame(mStream->latest());
 }
 
 void MainWindow::onDemoTick() {
@@ -189,7 +186,5 @@ void MainWindow::onDemoTick() {
     fr.frameToken = uint16_t(mDemoN & 0xFFFF);
     fr.rotAngleA = uint16_t(mDemoN % 360);
     fr.points = pts;
-    applyFrame(fr, QString("token=%1  sectors=360  rot=%2/0/0  [demo]")
-                       .arg(mDemoN % 360)
-                       .arg(mDemoN % 360));
+    applyFrame(fr);
 }

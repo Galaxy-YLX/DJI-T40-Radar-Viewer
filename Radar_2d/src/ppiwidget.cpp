@@ -10,29 +10,17 @@
 namespace {
 constexpr double kPi = 3.14159265358979323846;
 
-// viridis colour stops (approximate), interpolated by SNR in 0..255.
-struct Stop { float t; int r, g, b; };
-constexpr Stop kStops[] = {
-    {0.00f,  68,   1,  84},
-    {0.13f,  71,  44, 122},
-    {0.25f,  59,  81, 139},
-    {0.38f,  44, 113, 142},
-    {0.50f,  33, 144, 140},
-    {0.63f,  59, 173,  97},
-    {0.75f, 125, 204,  67},
-    {0.88f, 192, 229,  59},
-    {1.00f, 253, 231,  37},
-};
-
-int lerp(int a, int b, float f) {
-    return int(a + (b - a) * f + 0.5f);
-}
+// Classic monochrome radar: pure black canvas, green phosphor only.
+const QColor kGrid(0, 96, 48, 170);      // bearing lines
+const QColor kRing(0, 120, 60, 150);     // range rings
+const QColor kScale(0, 200, 100, 210);   // ring / bearing labels
+const QColor kPhosphor(0, 255, 102);     // primary text, strong returns
+const QColor kPhosphorDim(0, 150, 70);   // labels, secondary text
 }  // namespace
 
 PpiWidget::PpiWidget(QWidget *parent) : QWidget(parent) {
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(420, 420);
-    setStatusText("waiting for SIDE frames (UDP 9877) ...");
 }
 
 void PpiWidget::setFrame(const SideFrame &fr) {
@@ -40,8 +28,11 @@ void PpiWidget::setFrame(const SideFrame &fr) {
     update();
 }
 
-void PpiWidget::setStatusText(const QString &text) {
-    mStatus = text;
+void PpiWidget::setHud(const HudState &hud) {
+    if (mHud == hud) {
+        return;
+    }
+    mHud = hud;
     update();
 }
 
@@ -57,18 +48,10 @@ void PpiWidget::setPointRadius(double px) {
 }
 
 QColor PpiWidget::snrColor(float snr) {
+    // Weak returns are dim phosphor, strong returns approach full green.
     const float t = std::clamp(snr / 255.0f, 0.0f, 1.0f);
-    constexpr int n = int(sizeof(kStops) / sizeof(kStops[0]));
-    for (int i = 0; i < n - 1; ++i) {
-        if (t <= kStops[i + 1].t) {
-            const float span = kStops[i + 1].t - kStops[i].t;
-            const float f = span > 0.0f ? (t - kStops[i].t) / span : 0.0f;
-            return QColor(lerp(kStops[i].r, kStops[i + 1].r, f),
-                          lerp(kStops[i].g, kStops[i + 1].g, f),
-                          lerp(kStops[i].b, kStops[i + 1].b, f));
-        }
-    }
-    return QColor(kStops[n - 1].r, kStops[n - 1].g, kStops[n - 1].b);
+    const int g = int(70.0f + 185.0f * t + 0.5f);
+    return QColor(0, g, int(g * 0.4f + 0.5f));
 }
 
 void PpiWidget::paintEvent(QPaintEvent *) {
@@ -81,7 +64,7 @@ void PpiWidget::paintEvent(QPaintEvent *) {
     const double radiusPx = std::min(w, h) * 0.5 - 34.0;  // leave room for labels
 
     // Bearing lines (every 30 deg).
-    p.setPen(QPen(QColor(45, 45, 45, 150), 1));
+    p.setPen(QPen(kGrid, 1));
     for (int a = 0; a < 360; a += 30) {
         const double rad = a * kPi / 180.0;
         p.drawLine(QPointF(cx, cy),
@@ -89,44 +72,158 @@ void PpiWidget::paintEvent(QPaintEvent *) {
                            cy - radiusPx * std::cos(rad)));
     }
 
-    // Range rings + labels.
+    // Range rings + labels, all green phosphor.
     QFont small = font();
     small.setPointSizeF(7.5);
     p.setFont(small);
     for (double d = 5.0; d <= mRangeLimit + 1e-6; d += 5.0) {
         const double rp = d / mRangeLimit * radiusPx;
-        p.setPen(QPen(QColor(60, 60, 60, 130), 1, Qt::DotLine));
+        p.setPen(QPen(kRing, 1, Qt::DotLine));
         p.drawEllipse(QPointF(cx, cy), rp, rp);
-        p.setPen(QColor(150, 160, 150));
+        p.setPen(kScale);
         p.drawText(QPointF(cx + rp + 3.0, cy), QString::number(int(d)) + "m");
     }
 
-    // Forward marker (white triangle at the top).
+    // Cardinal bearings, just inside the outer ring so they never collide
+    // with the range labels drawn along the 090 radial.
+    p.setPen(kPhosphorDim);
+    for (int a = 0; a < 360; a += 90) {
+        const double rad = a * kPi / 180.0;
+        const double lx = cx + (radiusPx - 24.0) * std::sin(rad);
+        const double ly = cy - (radiusPx - 24.0) * std::cos(rad);
+        // Lift the label off the 090/270 radial, where range numbers sit.
+        p.drawText(QPointF(lx - 10.0, ly - 12.0),
+                   QString::number(a).rightJustified(3, QLatin1Char('0')));
+    }
+
+    // Forward marker (green triangle at the top).
     const QPointF tip(cx, cy - radiusPx - 2.0);
     const QPointF b1(cx - 6.0, cy - radiusPx - 14.0);
     const QPointF b2(cx + 6.0, cy - radiusPx - 14.0);
     p.setPen(Qt::NoPen);
-    p.setBrush(QColor(255, 255, 255));
+    p.setBrush(kPhosphor);
     p.drawPolygon(QPolygonF() << tip << b1 << b2);
 
-    // Blips, coloured by SNR.
+    // Rotating sweep arm with a short phosphor afterglow tail.
+    if (mHud.live && mHud.fps > 0.0) {
+        const double scan = std::fmod(double(mHud.rotA), 360.0);
+        constexpr double kTailDeg = 24.0;
+        constexpr int kTailSteps = 8;
+        const QRectF disc(cx - radiusPx, cy - radiusPx,
+                          2.0 * radiusPx, 2.0 * radiusPx);
+        p.setPen(Qt::NoPen);
+        for (int i = 0; i < kTailSteps; ++i) {
+            const double step = kTailDeg / kTailSteps;
+            const int alpha = int(70.0 * (1.0 - double(i) / kTailSteps));
+            p.setBrush(QColor(0, 255, 102, alpha));
+            p.drawPie(disc, int((90.0 - scan + i * step) * 16.0),
+                      int(step * 16.0) + 1);
+        }
+        const double a = scan * kPi / 180.0;
+        p.setPen(QPen(QColor(0, 255, 102, 150), 1.5));
+        p.drawLine(QPointF(cx, cy),
+                   QPointF(cx + radiusPx * std::sin(a),
+                           cy - radiusPx * std::cos(a)));
+    }
+
+    // Returns: a soft phosphor halo plus a green core graded by SNR.
     for (const SectorPoint &pt : mPoints) {
         const double rad = pt.azimuthDeg * kPi / 180.0;
         const double rp = pt.rangeM / mRangeLimit * radiusPx;
         const double x = cx + rp * std::sin(rad);
         const double y = cy - rp * std::cos(rad);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 255, 102, 38));
+        p.drawEllipse(QPointF(x, y), mPointRadius * 2.0,
+                      mPointRadius * 2.0);
         p.setBrush(snrColor(pt.snr));
         p.drawEllipse(QPointF(x, y), mPointRadius, mPointRadius);
     }
 
-    // Status text.
+    // Origin cross.
+    p.setPen(QPen(kPhosphorDim, 1));
+    p.drawLine(QPointF(cx - 5.0, cy), QPointF(cx + 5.0, cy));
+    p.drawLine(QPointF(cx, cy - 5.0), QPointF(cx, cy + 5.0));
+
+    drawHud(p);
+}
+
+void PpiWidget::drawHud(QPainter &p) {
+    const HudState &h = mHud;
+    const bool streaming = h.live && h.fps > 0.0;
+
     QFont mono("Monospace");
     mono.setStyleHint(QFont::TypeWriter);
-    mono.setPointSizeF(8.5);
+    mono.setPointSizeF(9.0);
+    QFont bold = mono;
+    bold.setBold(true);
+    QFont small = mono;
+    small.setPointSizeF(7.5);
+
+    p.save();
+    p.setFont(bold);
+    const auto fmb = p.fontMetrics();
     p.setFont(mono);
-    p.setPen(QColor(142, 255, 176));
-    p.drawText(QRectF(8, 8, w - 16, h - 16), Qt::AlignTop | Qt::AlignLeft,
-               mStatus);
+    const auto fm = p.fontMetrics();
+
+    const qreal left = 14.0;
+    const qreal right = 292.0;
+    const qreal top = 14.0;
+    const qreal rowH = fm.height() + 3.0;
+
+    const QString title = h.demo ? QString("[ SIDE STREAM / DEMO ]")
+                                 : QString("[ SIDE STREAM ]");
+    const QString badge =
+        !h.live ? QString("[ WAIT ]  --.- Hz")
+                : (streaming
+                       ? QString("[ LIVE ]  %1 Hz").arg(h.fps, 0, 'f', 1)
+                       : QString("[ STALE ]  0.0 Hz"));
+
+    const qreal titleY = top + fmb.ascent();
+    p.setFont(bold);
+    p.setPen(kPhosphor);
+    p.drawText(QPointF(left, titleY), title);
+    p.drawText(QPointF(right - fmb.horizontalAdvance(badge), titleY), badge);
+
+    const qreal ruleY = titleY + fmb.descent() + 4.0;
+    p.setPen(QPen(kPhosphorDim, 1.0));
+    p.drawLine(QPointF(left, ruleY), QPointF(right, ruleY));
+
+    p.setFont(mono);
+    const qreal labelW = fm.horizontalAdvance("SECTORS  ");
+    const qreal col2 = left + 136.0;
+    auto cell = [&](qreal x, int row, const char *label,
+                    const QString &value) {
+        const qreal y = ruleY + 6.0 + fm.ascent() + row * rowH;
+        p.setPen(kPhosphorDim);
+        p.drawText(QPointF(x, y), QString::fromLatin1(label));
+        p.setPen(kPhosphor);
+        p.drawText(QPointF(x + labelW, y), value);
+    };
+
+    // Single-colour display: abnormal values are flagged with '!'.
+    const QString sectors = QString("%1/360").arg(h.sectors)
+        + ((h.live && h.sectors < 360) ? "!" : "");
+    const QString cfar = QString::number(h.cfarError)
+        + (h.cfarError != 0 ? "!" : "");
+    const QString blips = QString::number(h.blips)
+        + ((h.live && h.blips == 0) ? "!" : "");
+
+    cell(left, 0, "FRAME", QString::number(h.frames));
+    cell(col2, 0, "TOKEN", QString::number(h.token));
+    cell(left, 1, "SECTORS", sectors);
+    cell(col2, 1, "CFAR", cfar);
+    cell(left, 2, "ROTOR",
+         QString("%1/%2/%3").arg(h.rotA).arg(h.rotB).arg(h.rotC));
+    cell(col2, 2, "BLIPS", blips);
+    cell(left, 3, "RANGE", QString::number(h.rangeM, 'f', 1) + "m");
+    cell(col2, 3, "SIZE", QString::number(h.pointRadius, 'f', 1));
+
+    p.setFont(small);
+    p.setPen(kPhosphorDim);
+    p.drawText(QPointF(left, ruleY + 6.0 + fm.ascent() + 4.0 * rowH + 2.0),
+               "wheel / i,o  range      [ ]  dot size");
+    p.restore();
 }
 
 void PpiWidget::wheelEvent(QWheelEvent *ev) {

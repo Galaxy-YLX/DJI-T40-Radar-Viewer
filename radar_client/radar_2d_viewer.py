@@ -41,7 +41,11 @@ from radar_3d_viewer import (preflight, start_fc_client, stop_fc_client,
                              wait_for_radar)
 
 DEFAULT_RADAR_IP = '192.168.8.2'
+
+# Monochrome radar phosphor: pure black canvas, green only.
 GREEN = '#00ff66'
+DIM_GREEN = '#2f9d5c'
+GRID_GREEN = '#0b3d20'
 
 
 def build_parser():
@@ -149,7 +153,7 @@ class RadarPPI:
         import matplotlib
         matplotlib.use(backend or rv._select_gui_backend())
         import matplotlib.pyplot as plt
-        from matplotlib.colors import Normalize
+        from matplotlib.colors import Normalize, LinearSegmentedColormap
 
         self.plt = plt
         self.args = args
@@ -161,32 +165,40 @@ class RadarPPI:
         ax.set_theta_direction(-1)          # clockwise sweep, forward at top
         ax.set_rlim(0, args.range_m * 1.05)
         ax.set_rlabel_position(135)
-        ax.set_facecolor('#0b0e12')
+        ax.set_facecolor('black')
         for sp in ax.spines.values():
-            sp.set_color('#2a2f3a')
-        ax.grid(color='#3a3a3a', alpha=0.4, linestyle=':')
-        ax.tick_params(colors='#b8c0cc', labelsize=8)
+            sp.set_color(GRID_GREEN)
+        ax.grid(color=GRID_GREEN, alpha=0.85, linestyle=':')
+        ax.tick_params(colors=DIM_GREEN, labelsize=8)
 
         # Range rings: keep a readable set inside the current limit.
         self._set_rticks(args.range_m)
         # Forward marker + label.
-        ax.plot([0], [0], marker='^', color='white', markersize=9,
+        ax.plot([0], [0], marker='^', color=GREEN, markersize=9,
                 markeredgecolor='black', zorder=7)
-        ax.text(0, args.range_m * 0.92, 'fwd', color='#ffcc66', fontsize=8,
+        ax.text(0, args.range_m * 0.92, 'fwd', color=GREEN, fontsize=8,
                 ha='center', va='bottom')
 
         ax.set_title('DJI T40 — 2D radar (azimuth × range)',
                      color=GREEN, pad=16)
         self.snr_norm = Normalize(vmin=0.0, vmax=255.0)
-        self.sc = ax.scatter([], [], c=[], cmap='viridis',
-                             norm=self.snr_norm, s=[], alpha=0.6,
+        self.cmap = LinearSegmentedColormap.from_list(
+            'radar_green', ['#002a12', '#00ff66'])
+        self.sc = ax.scatter([], [], c=[], cmap=self.cmap,
+                             norm=self.snr_norm, s=[], alpha=0.85,
                              edgecolors='none', zorder=4)
         cb = self.fig.colorbar(self.sc, ax=ax, shrink=0.7, pad=0.08,
                                label='SNR')
-        cb.ax.yaxis.label.set_color('#c8d8ce')
-        cb.ax.tick_params(colors='#c8d8ce')
-        self.stats = self.fig.text(0.02, 0.02, '', fontsize=9,
-                                   family='monospace', color='#8effb0')
+        cb.ax.yaxis.label.set_color(DIM_GREEN)
+        cb.ax.tick_params(colors=DIM_GREEN)
+        try:
+            cb.outline.set_edgecolor(GRID_GREEN)
+        except AttributeError:
+            for sp in cb.ax.spines.values():
+                sp.set_edgecolor(GRID_GREEN)
+        self.stats = self.fig.text(
+            0.02, 0.02, '', fontsize=9, family='monospace',
+            color=GREEN, linespacing=1.45)
         self.warning = ax.text(0, args.range_m * 0.5, '',
                                ha='center', va='center', fontsize=13,
                                color=GREEN, alpha=0.9)
@@ -259,21 +271,31 @@ class RadarPPI:
         except Exception:
             self.sc.remove()
             self.sc = self.ax.scatter(np.deg2rad(az_deg), r, c=snr,
-                                      cmap='viridis', norm=self.snr_norm,
+                                      cmap=self.cmap, norm=self.snr_norm,
                                       s=sizes, alpha=0.6, edgecolors='none',
                                       zorder=4)
 
         if fr is None:
-            head = "waiting for SIDE frames (UDP 9877) ..."
-            body = ""
+            lines = [
+                "[ SIDE STREAM ]                       [ WAIT ]",
+                "----------------------------------------------",
+                " no SIDE frames (UDP 9877)",
+            ]
+            status_colour = DIM_GREEN
             self.warning.set_text('WAITING FOR SIDE FRAMES (UDP 9877)')
         else:
-            head = (f"token={fr.frame_token}  sectors={fr.sectors_decoded}  "
-                    f"rot_angle={fr.rot_angle_a}/{fr.rot_angle_b}/"
-                    f"{fr.rot_angle_c}  cfar_error={fr.cfar_error}")
-            body = (f"blips={len(pts):4d}  frames={frames:<6d}  "
-                    f"fps={fps:5.1f}Hz  range={args.range_m / self.zoom:.1f}m  "
-                    f"size={self.point_size:.1f} ([/])")
+            tag = 'LIVE' if fps > 0.0 else 'STALE'
+            status_colour = GREEN if fps > 0.0 else DIM_GREEN
+            lines = [
+                f"[ SIDE STREAM ]        [ {tag:<5} ] {fps:5.1f} Hz",
+                "----------------------------------------------",
+                f" FRAME    {frames:<9} TOKEN   {str(fr.frame_token):<7}",
+                f" SECTORS  {str(fr.sectors_decoded):<3}/360   "
+                f"CFAR    {str(fr.cfar_error):<7}",
+                f" ROTOR    {fr.rot_angle_a}/{fr.rot_angle_b}/{fr.rot_angle_c}",
+                f" BLIPS    {len(pts):<9} RANGE   {args.range_m / self.zoom:.1f} m",
+                f" SIZE     {self.point_size:<9.1f} [ ] dot size",
+            ]
             if not pts:
                 self.warning.set_text(
                     'NO POINTS\ncheck FC client / CAN bridge / 900 rpm / '
@@ -281,9 +303,10 @@ class RadarPPI:
             else:
                 self.warning.set_text('')
         if error:
-            body += f"\n[err] {error}"
+            lines.append(f" [err] {error}")
             self.warning.set_text('ERROR\n' + str(error))
-        self.stats.set_text(head + "\n" + body)
+        self.stats.set_text('\n'.join(lines))
+        self.stats.set_color(status_colour)
         return (self.sc, self.stats, self.warning)
 
 

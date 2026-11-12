@@ -50,7 +50,10 @@ HERE = Path(__file__).resolve().parent
 SETUP = HERE.parent / 'setup'
 DEFAULT_RADAR_IP = '192.168.8.2'
 DEFAULT_HOST_IP = '192.168.8.1'
+# Monochrome radar phosphor: pure black canvas, green only.
 GREEN = '#00ff66'
+DIM_GREEN = '#2f9d5c'
+GRID_GREEN = '#0b3d20'
 
 
 def build_parser():
@@ -662,22 +665,25 @@ class PointCloud3D:
         import matplotlib
         matplotlib.use(backend or rv._select_gui_backend())
         import matplotlib.pyplot as plt
-        from matplotlib.colors import Normalize
+        from matplotlib.colors import Normalize, LinearSegmentedColormap
         from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
         self.plt = plt
         self.args = args
         self.use_cmap = args.color_by != 'none'
+        self.cmap = (LinearSegmentedColormap.from_list(
+            'radar_green', ['#002a12', '#00ff66'])
+            if self.use_cmap else None)
         if self.use_cmap:
-            self.cmap, vmin, vmax = {
-                'z': ('coolwarm', -args.z_range, args.z_range),
-                'snr': ('viridis', 0.0, 255.0),
-                'sector': ('hsv', 0.0, 360.0),
+            vmin, vmax = {
+                'z': (-args.z_range, args.z_range),
+                'snr': (0.0, 255.0),
+                'sector': (0.0, 360.0),
             }[args.color_by]
             self.norm = Normalize(vmin=vmin, vmax=vmax)
             colour_kwargs = dict(c=[], cmap=self.cmap, norm=self.norm)
         else:
-            self.cmap = self.norm = None
+            self.norm = None
             colour_kwargs = dict(c=GREEN)
 
         self.fig = plt.figure(figsize=(10, 8))
@@ -696,12 +702,23 @@ class PointCloud3D:
                 axis.pane.set_edgecolor('none')
             except Exception:
                 pass
-        ax.tick_params(colors='#9fb8a6', labelsize=8)
+            try:
+                axis.line.set_color(GRID_GREEN)
+            except Exception:
+                pass
+            # mplot3d ignores ax.grid(color=...): the pane grid colour lives
+            # in the private _axinfo table.
+            try:
+                axis._axinfo['grid']['color'] = (0.04, 0.24, 0.13, 0.75)
+                axis._axinfo['grid']['linewidth'] = 0.6
+            except Exception:
+                pass
+        ax.tick_params(colors=DIM_GREEN, labelsize=8)
 
         R, Z = args.range_m, args.z_range
-        ax.set_xlabel('x forward (m)', color='#c8d8ce')
-        ax.set_ylabel('y right (m)', color='#c8d8ce')
-        ax.set_zlabel('z up (m)', color='#c8d8ce')
+        ax.set_xlabel('x forward (m)', color=DIM_GREEN)
+        ax.set_ylabel('y right (m)', color=DIM_GREEN)
+        ax.set_zlabel('z up (m)', color=DIM_GREEN)
         ax.set_xlim(-R, R)
         ax.set_ylim(-R, R)
         ax.set_zlim(-Z, Z)
@@ -714,8 +731,7 @@ class PointCloud3D:
         self.zoom = 1.0           # 1.0 = full range; >1 zooms in
         ax.view_init(elev=28, azim=-60)
         raw_tag = 'RAW' if args.persist_min_hits == 0 else 'filtered'
-        ax.set_title(f'DJI T40 — {raw_tag} 3D point cloud',
-                     color=GREEN if not self.use_cmap else '#e0e0e0')
+        ax.set_title(f'DJI T40 — {raw_tag} 3D point cloud', color=GREEN)
         try:
             ax.set_box_aspect((2 * R, 2 * R, 2 * Z))
         except AttributeError:
@@ -723,9 +739,9 @@ class PointCloud3D:
 
         # Radar body-frame axes: forward (+x) and right (+y), shown as a
         # bare cross with no grid, rings, ticks or distance labels.
-        ax.plot([-R, R], [0, 0], [0, 0], color='#3a6b4f', lw=0.9, alpha=0.9)
-        ax.plot([0, 0], [-R, R], [0, 0], color='#3a6b4f', lw=0.9, alpha=0.9)
-        ax.scatter([0], [0], [0], marker='^', c='white', edgecolors=GREEN,
+        ax.plot([-R, R], [0, 0], [0, 0], color=GRID_GREEN, lw=0.9, alpha=0.9)
+        ax.plot([0, 0], [-R, R], [0, 0], color=GRID_GREEN, lw=0.9, alpha=0.9)
+        ax.scatter([0], [0], [0], marker='^', c=GREEN, edgecolors=GREEN,
                    s=90, depthshade=False, zorder=10)
 
         self.sc = ax.scatter([], [], [], s=[], depthshade=False, alpha=0.9,
@@ -734,14 +750,16 @@ class PointCloud3D:
             cb = self.fig.colorbar(self.sc, ax=ax, shrink=0.55, pad=0.1,
                                    label={'z': 'height z (m)', 'snr': 'SNR',
                                           'sector': 'sector id'}[args.color_by])
-            cb.ax.yaxis.label.set_color('#c8d8ce')
-            cb.ax.tick_params(colors='#c8d8ce')
+            cb.ax.yaxis.label.set_color(DIM_GREEN)
+            cb.ax.tick_params(colors=DIM_GREEN)
             try:
-                cb.outline.set_edgecolor('#3a3a3a')
-            except Exception:
-                pass
-        self.stats = self.fig.text(0.02, 0.02, '', fontsize=9,
-                                   family='monospace', color='#8effb0')
+                cb.outline.set_edgecolor(GRID_GREEN)
+            except AttributeError:
+                for sp in cb.ax.spines.values():
+                    sp.set_edgecolor(GRID_GREEN)
+        self.stats = self.fig.text(
+            0.02, 0.02, '', fontsize=9, family='monospace',
+            color=GREEN, linespacing=1.45)
         self.warning = self.ax.text2D(0.5, 0.5, '', transform=self.ax.transAxes,
                                       ha='center', va='center', fontsize=14,
                                       color=GREEN, alpha=0.9)
@@ -848,22 +866,34 @@ class PointCloud3D:
                                           edgecolors='none')
 
         if fr is None:
-            head = "waiting for SIDE frames (UDP 9877) ..."
-            body = ""
+            lines = [
+                "[ SIDE STREAM ]                       [ WAIT ]",
+                "----------------------------------------------",
+                " no SIDE frames (UDP 9877)",
+            ]
+            status_colour = DIM_GREEN
             self.warning.set_text('WAITING FOR SIDE FRAMES (UDP 9877)')
         else:
-            head = (f"token={fr.frame_token}  sectors={fr.sectors_decoded}  "
-                    f"rot_angle={fr.rot_angle_a}/{fr.rot_angle_b}/"
-                    f"{fr.rot_angle_c}  cfar_error={fr.cfar_error}")
+            tag = 'LIVE' if fps > 0.0 else 'STALE'
+            status_colour = GREEN if fps > 0.0 else DIM_GREEN
             colour_tag = 'GREEN' if not self.use_cmap else args.color_by
-            body = (f"raw_pts={len(pts):4d}  frames={frames:<6d}  "
-                    f"fps={fps:5.1f}Hz  "
-                    f"filter={'off (RAW)' if args.persist_min_hits == 0 else 'on'}  "
-                    f"color={colour_tag}  size={self.point_size:.1f} ([/])")
+            filter_tag = 'off (RAW)' if args.persist_min_hits == 0 else 'on'
+            lines = [
+                f"[ SIDE STREAM ]        [ {tag:<5} ] {fps:5.1f} Hz",
+                "----------------------------------------------",
+                f" FRAME    {frames:<9} TOKEN   {str(fr.frame_token):<7}",
+                f" SECTORS  {str(fr.sectors_decoded):<3}/360   "
+                f"CFAR    {str(fr.cfar_error):<7}",
+                f" ROTOR    {fr.rot_angle_a}/{fr.rot_angle_b}/{fr.rot_angle_c}",
+                f" RAW_PTS  {len(pts):<9} FILTER  {filter_tag}",
+                f" COLOR    {colour_tag:<9} SIZE    {self.point_size:.1f}",
+                " [ ] dot size   i,o range   wheel zoom",
+            ]
             if diag:
-                body += (f"  active_sec={diag['active']} "
-                         f"sector_pts={diag['sector_pts']}"
-                         + ('  [fallback]' if diag['fallback'] else ''))
+                lines.append(
+                    f" ACTIVE   {str(diag['active']):<9} "
+                    f"SECPTS  {diag['sector_pts']}"
+                    + ('   [fallback]' if diag['fallback'] else ''))
             if not pts:
                 if diag and diag['sector_pts'] > 0:
                     hint = 'sector points present, projection produced none'
@@ -882,9 +912,10 @@ class PointCloud3D:
                 else:
                     self.warning.set_text('')
         if error:
-            body += f"\n[err] {error}"
+            lines.append(f" [err] {error}")
             self.warning.set_text('ERROR\n' + str(error))
-        self.stats.set_text(head + "\n" + body)
+        self.stats.set_text('\n'.join(lines))
+        self.stats.set_color(status_colour)
         return (self.sc, self.stats, self.warning)
 
 
