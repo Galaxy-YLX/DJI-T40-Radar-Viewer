@@ -47,6 +47,11 @@ GREEN = '#00ff66'
 DIM_GREEN = '#2f9d5c'
 GRID_GREEN = '#0b3d20'
 
+# CJK faces keep the Chinese UI from rendering as tofu. The mono face is
+# also used for the status block so its columns stay aligned.
+CJK_FONT = 'SimHei'
+CJK_MONO = 'Noto Sans Mono CJK SC'
+
 
 def build_parser():
     p = argparse.ArgumentParser(
@@ -155,6 +160,10 @@ class RadarPPI:
         import matplotlib.pyplot as plt
         from matplotlib.colors import Normalize, LinearSegmentedColormap
 
+        plt.rcParams['font.sans-serif'] = [CJK_FONT, 'Droid Sans Fallback',
+                                           'DejaVu Sans']
+        plt.rcParams['axes.unicode_minus'] = False
+
         self.plt = plt
         self.args = args
         self.fig = plt.figure(figsize=(9, 8))
@@ -176,10 +185,10 @@ class RadarPPI:
         # Forward marker + label.
         ax.plot([0], [0], marker='^', color=GREEN, markersize=9,
                 markeredgecolor='black', zorder=7)
-        ax.text(0, args.range_m * 0.92, 'fwd', color=GREEN, fontsize=8,
+        ax.text(0, args.range_m * 0.92, '前', color=GREEN, fontsize=9,
                 ha='center', va='bottom')
 
-        ax.set_title('DJI T40 — 2D radar (azimuth × range)',
+        ax.set_title('大疆 T40 — 侧向雷达（方位 × 距离）',
                      color=GREEN, pad=16)
         self.snr_norm = Normalize(vmin=0.0, vmax=255.0)
         self.cmap = LinearSegmentedColormap.from_list(
@@ -188,7 +197,7 @@ class RadarPPI:
                              norm=self.snr_norm, s=[], alpha=0.85,
                              edgecolors='none', zorder=4)
         cb = self.fig.colorbar(self.sc, ax=ax, shrink=0.7, pad=0.08,
-                               label='SNR')
+                               label='信噪比')
         cb.ax.yaxis.label.set_color(DIM_GREEN)
         cb.ax.tick_params(colors=DIM_GREEN)
         try:
@@ -197,7 +206,8 @@ class RadarPPI:
             for sp in cb.ax.spines.values():
                 sp.set_edgecolor(GRID_GREEN)
         self.stats = self.fig.text(
-            0.02, 0.02, '', fontsize=9, family='monospace',
+            0.02, 0.02, '', fontsize=9,
+            fontfamily=[CJK_MONO, 'Droid Sans Fallback', 'DejaVu Sans Mono'],
             color=GREEN, linespacing=1.45)
         self.warning = ax.text(0, args.range_m * 0.5, '',
                                ha='center', va='center', fontsize=13,
@@ -277,34 +287,33 @@ class RadarPPI:
 
         if fr is None:
             lines = [
-                "[ SIDE STREAM ]                       [ WAIT ]",
+                "[ 侧向雷达 ]                       [ 等待 ]",
                 "----------------------------------------------",
-                " no SIDE frames (UDP 9877)",
+                " 等待侧向数据（UDP 9877）",
             ]
             status_colour = DIM_GREEN
-            self.warning.set_text('WAITING FOR SIDE FRAMES (UDP 9877)')
+            self.warning.set_text('等待侧向雷达数据（UDP 9877）')
         else:
-            tag = 'LIVE' if fps > 0.0 else 'STALE'
+            tag = '实时' if fps > 0.0 else '停滞'
             status_colour = GREEN if fps > 0.0 else DIM_GREEN
             lines = [
-                f"[ SIDE STREAM ]        [ {tag:<5} ] {fps:5.1f} Hz",
+                f"[ 侧向雷达 ]        [ {tag} ] {fps:5.1f} Hz",
                 "----------------------------------------------",
-                f" FRAME    {frames:<9} TOKEN   {str(fr.frame_token):<7}",
-                f" SECTORS  {str(fr.sectors_decoded):<3}/360   "
-                f"CFAR    {str(fr.cfar_error):<7}",
-                f" ROTOR    {fr.rot_angle_a}/{fr.rot_angle_b}/{fr.rot_angle_c}",
-                f" BLIPS    {len(pts):<9} RANGE   {args.range_m / self.zoom:.1f} m",
-                f" SIZE     {self.point_size:<9.1f} [ ] dot size",
+                f" 帧号    {frames:<9} 令牌    {str(fr.frame_token):<7}",
+                f" 扇区    {str(fr.sectors_decoded):<3}/360   "
+                f"杂波    {str(fr.cfar_error):<7}",
+                f" 转子    {fr.rot_angle_a}/{fr.rot_angle_b}/{fr.rot_angle_c}",
+                f" 回波    {len(pts):<9} 量程    {args.range_m / self.zoom:.1f} m",
+                f" 点径    {self.point_size:<9.1f} [ ] 点大小",
             ]
             if not pts:
                 self.warning.set_text(
-                    'NO POINTS\ncheck FC client / CAN bridge / 900 rpm / '
-                    'streamer')
+                    '无回波点\n检查飞控客户端 / CAN 桥接 / 900 rpm / 数据转发')
             else:
                 self.warning.set_text('')
         if error:
-            lines.append(f" [err] {error}")
-            self.warning.set_text('ERROR\n' + str(error))
+            lines.append(f" [错误] {error}")
+            self.warning.set_text('错误\n' + str(error))
         self.stats.set_text('\n'.join(lines))
         self.stats.set_color(status_colour)
         return (self.sc, self.stats, self.warning)

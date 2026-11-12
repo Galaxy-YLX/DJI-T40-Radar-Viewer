@@ -55,6 +55,11 @@ GREEN = '#00ff66'
 DIM_GREEN = '#2f9d5c'
 GRID_GREEN = '#0b3d20'
 
+# CJK faces keep the Chinese UI from rendering as tofu. The mono face is
+# also used for the status block so its columns stay aligned.
+CJK_FONT = 'SimHei'
+CJK_MONO = 'Noto Sans Mono CJK SC'
+
 
 def build_parser():
     p = argparse.ArgumentParser(
@@ -668,6 +673,10 @@ class PointCloud3D:
         from matplotlib.colors import Normalize, LinearSegmentedColormap
         from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
+        plt.rcParams['font.sans-serif'] = [CJK_FONT, 'Droid Sans Fallback',
+                                           'DejaVu Sans']
+        plt.rcParams['axes.unicode_minus'] = False
+
         self.plt = plt
         self.args = args
         self.use_cmap = args.color_by != 'none'
@@ -716,9 +725,9 @@ class PointCloud3D:
         ax.tick_params(colors=DIM_GREEN, labelsize=8)
 
         R, Z = args.range_m, args.z_range
-        ax.set_xlabel('x forward (m)', color=DIM_GREEN)
-        ax.set_ylabel('y right (m)', color=DIM_GREEN)
-        ax.set_zlabel('z up (m)', color=DIM_GREEN)
+        ax.set_xlabel('前 x (m)', color=DIM_GREEN)
+        ax.set_ylabel('右 y (m)', color=DIM_GREEN)
+        ax.set_zlabel('上 z (m)', color=DIM_GREEN)
         ax.set_xlim(-R, R)
         ax.set_ylim(-R, R)
         ax.set_zlim(-Z, Z)
@@ -730,8 +739,8 @@ class PointCloud3D:
             pass
         self.zoom = 1.0           # 1.0 = full range; >1 zooms in
         ax.view_init(elev=28, azim=-60)
-        raw_tag = 'RAW' if args.persist_min_hits == 0 else 'filtered'
-        ax.set_title(f'DJI T40 — {raw_tag} 3D point cloud', color=GREEN)
+        raw_tag = '原始' if args.persist_min_hits == 0 else '滤波'
+        ax.set_title(f'大疆 T40 — {raw_tag}三维点云', color=GREEN)
         try:
             ax.set_box_aspect((2 * R, 2 * R, 2 * Z))
         except AttributeError:
@@ -747,9 +756,10 @@ class PointCloud3D:
         self.sc = ax.scatter([], [], [], s=[], depthshade=False, alpha=0.9,
                              edgecolors='none', **colour_kwargs)
         if self.use_cmap:
-            cb = self.fig.colorbar(self.sc, ax=ax, shrink=0.55, pad=0.1,
-                                   label={'z': 'height z (m)', 'snr': 'SNR',
-                                          'sector': 'sector id'}[args.color_by])
+            cb = self.fig.colorbar(
+                self.sc, ax=ax, shrink=0.55, pad=0.1,
+                label={'z': '高度 z (m)', 'snr': '信噪比',
+                       'sector': '扇区号'}[args.color_by])
             cb.ax.yaxis.label.set_color(DIM_GREEN)
             cb.ax.tick_params(colors=DIM_GREEN)
             try:
@@ -758,7 +768,8 @@ class PointCloud3D:
                 for sp in cb.ax.spines.values():
                     sp.set_edgecolor(GRID_GREEN)
         self.stats = self.fig.text(
-            0.02, 0.02, '', fontsize=9, family='monospace',
+            0.02, 0.02, '', fontsize=9,
+            fontfamily=[CJK_MONO, 'Droid Sans Fallback', 'DejaVu Sans Mono'],
             color=GREEN, linespacing=1.45)
         self.warning = self.ax.text2D(0.5, 0.5, '', transform=self.ax.transAxes,
                                       ha='center', va='center', fontsize=14,
@@ -867,53 +878,54 @@ class PointCloud3D:
 
         if fr is None:
             lines = [
-                "[ SIDE STREAM ]                       [ WAIT ]",
+                "[ 侧向雷达 ]                       [ 等待 ]",
                 "----------------------------------------------",
-                " no SIDE frames (UDP 9877)",
+                " 等待侧向数据（UDP 9877）",
             ]
             status_colour = DIM_GREEN
-            self.warning.set_text('WAITING FOR SIDE FRAMES (UDP 9877)')
+            self.warning.set_text('等待侧向雷达数据（UDP 9877）')
         else:
-            tag = 'LIVE' if fps > 0.0 else 'STALE'
+            tag = '实时' if fps > 0.0 else '停滞'
             status_colour = GREEN if fps > 0.0 else DIM_GREEN
-            colour_tag = 'GREEN' if not self.use_cmap else args.color_by
-            filter_tag = 'off (RAW)' if args.persist_min_hits == 0 else 'on'
+            colour_tag = ({'z': '高度', 'snr': '信噪比', 'sector': '扇区'}
+                          .get(args.color_by, '绿色'))
+            filter_tag = '关（原始）' if args.persist_min_hits == 0 else '开'
             lines = [
-                f"[ SIDE STREAM ]        [ {tag:<5} ] {fps:5.1f} Hz",
+                f"[ 侧向雷达 ]        [ {tag} ] {fps:5.1f} Hz",
                 "----------------------------------------------",
-                f" FRAME    {frames:<9} TOKEN   {str(fr.frame_token):<7}",
-                f" SECTORS  {str(fr.sectors_decoded):<3}/360   "
-                f"CFAR    {str(fr.cfar_error):<7}",
-                f" ROTOR    {fr.rot_angle_a}/{fr.rot_angle_b}/{fr.rot_angle_c}",
-                f" RAW_PTS  {len(pts):<9} FILTER  {filter_tag}",
-                f" COLOR    {colour_tag:<9} SIZE    {self.point_size:.1f}",
-                " [ ] dot size   i,o range   wheel zoom",
+                f" 帧号    {frames:<9} 令牌    {str(fr.frame_token):<7}",
+                f" 扇区    {str(fr.sectors_decoded):<3}/360   "
+                f"杂波    {str(fr.cfar_error):<7}",
+                f" 转子    {fr.rot_angle_a}/{fr.rot_angle_b}/{fr.rot_angle_c}",
+                f" 点数    {len(pts):<9} 滤波    {filter_tag}",
+                f" 着色    {colour_tag:<9} 点径    {self.point_size:.1f}",
+                " [ ] 点大小   i,o 缩放   滚轮 视角",
             ]
             if diag:
                 lines.append(
-                    f" ACTIVE   {str(diag['active']):<9} "
-                    f"SECPTS  {diag['sector_pts']}"
-                    + ('   [fallback]' if diag['fallback'] else ''))
+                    f" 有效    {str(diag['active']):<9} "
+                    f"扇区点  {diag['sector_pts']}"
+                    + ('   [回退]' if diag['fallback'] else ''))
             if not pts:
                 if diag and diag['sector_pts'] > 0:
-                    hint = 'sector points present, projection produced none'
+                    hint = '已有扇区点，但投影后无有效点'
                 else:
-                    hint = ('no sector data: check FC client / CAN bridge / '
-                            '900 rpm / streamer')
-                self.warning.set_text('NO POINTS\n' + hint)
+                    hint = ('无扇区数据：检查飞控客户端 / CAN 桥接 / '
+                            '900 rpm / 数据转发')
+                self.warning.set_text('无回波点\n' + hint)
             else:
                 R, Z = args.range_m, args.z_range
                 inside = int(((np.abs(xs) <= R) & (np.abs(ys) <= R) &
                               (np.abs(zs) <= Z)).sum())
                 if inside == 0:
                     self.warning.set_text(
-                        f'ALL {len(pts)} POINTS OUTSIDE VIEW\n'
-                        f'raise --range (now {R}m) / --z-range (now {Z}m)')
+                        f'{len(pts)} 个点全部超出视野\n'
+                        f'请增大 --range（当前 {R}m）/ --z-range（当前 {Z}m）')
                 else:
                     self.warning.set_text('')
         if error:
-            lines.append(f" [err] {error}")
-            self.warning.set_text('ERROR\n' + str(error))
+            lines.append(f" [错误] {error}")
+            self.warning.set_text('错误\n' + str(error))
         self.stats.set_text('\n'.join(lines))
         self.stats.set_color(status_colour)
         return (self.sc, self.stats, self.warning)

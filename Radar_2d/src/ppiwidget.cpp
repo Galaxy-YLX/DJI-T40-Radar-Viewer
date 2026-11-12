@@ -13,9 +13,9 @@ constexpr double kPi = 3.14159265358979323846;
 // Classic monochrome radar: pure black canvas, green phosphor only.
 const QColor kGrid(0, 96, 48, 170);      // bearing lines
 const QColor kRing(0, 120, 60, 150);     // range rings
-const QColor kScale(0, 200, 100, 210);   // ring / bearing labels
+const QColor kScale(0, 205, 105);        // ring / bearing labels
 const QColor kPhosphor(0, 255, 102);     // primary text, strong returns
-const QColor kPhosphorDim(0, 150, 70);   // labels, secondary text
+const QColor kPhosphorDim(0, 185, 88);   // labels, secondary text
 }  // namespace
 
 PpiWidget::PpiWidget(QWidget *parent) : QWidget(parent) {
@@ -152,17 +152,15 @@ void PpiWidget::drawHud(QPainter &p) {
     const HudState &h = mHud;
     const bool streaming = h.live && h.fps > 0.0;
 
-    QFont mono("Monospace");
+    QFont mono;
+    mono.setFamilies({"Noto Sans Mono CJK SC", "Droid Sans Fallback",
+                      "Monospace"});
     mono.setStyleHint(QFont::TypeWriter);
     mono.setPointSizeF(9.0);
-    QFont bold = mono;
-    bold.setBold(true);
     QFont small = mono;
     small.setPointSizeF(7.5);
 
     p.save();
-    p.setFont(bold);
-    const auto fmb = p.fontMetrics();
     p.setFont(mono);
     const auto fm = p.fontMetrics();
 
@@ -171,32 +169,32 @@ void PpiWidget::drawHud(QPainter &p) {
     const qreal top = 14.0;
     const qreal rowH = fm.height() + 3.0;
 
-    const QString title = h.demo ? QString("[ SIDE STREAM / DEMO ]")
-                                 : QString("[ SIDE STREAM ]");
+    const QString title = h.demo ? QString("[ 侧向雷达 / 演示 ]")
+                                 : QString("[ 侧向雷达 ]");
     const QString badge =
-        !h.live ? QString("[ WAIT ]  --.- Hz")
+        !h.live ? QString("[ 等待 ]  --.- Hz")
                 : (streaming
-                       ? QString("[ LIVE ]  %1 Hz").arg(h.fps, 0, 'f', 1)
-                       : QString("[ STALE ]  0.0 Hz"));
+                       ? QString("[ 实时 ]  %1 Hz").arg(h.fps, 0, 'f', 1)
+                       : QString("[ 停滞 ]  0.0 Hz"));
 
-    const qreal titleY = top + fmb.ascent();
-    p.setFont(bold);
+    const qreal titleY = top + fm.ascent();
     p.setPen(kPhosphor);
     p.drawText(QPointF(left, titleY), title);
-    p.drawText(QPointF(right - fmb.horizontalAdvance(badge), titleY), badge);
+    p.drawText(QPointF(right - fm.horizontalAdvance(badge), titleY), badge);
 
-    const qreal ruleY = titleY + fmb.descent() + 4.0;
+    const qreal ruleY = titleY + fm.descent() + 4.0;
     p.setPen(QPen(kPhosphorDim, 1.0));
     p.drawLine(QPointF(left, ruleY), QPointF(right, ruleY));
 
     p.setFont(mono);
-    const qreal labelW = fm.horizontalAdvance("SECTORS  ");
+    const qreal labelW =
+        fm.horizontalAdvance(QString::fromUtf8("扇区    "));
     const qreal col2 = left + 136.0;
     auto cell = [&](qreal x, int row, const char *label,
                     const QString &value) {
         const qreal y = ruleY + 6.0 + fm.ascent() + row * rowH;
-        p.setPen(kPhosphorDim);
-        p.drawText(QPointF(x, y), QString::fromLatin1(label));
+        p.setPen(kScale);
+        p.drawText(QPointF(x, y), QString::fromUtf8(label));
         p.setPen(kPhosphor);
         p.drawText(QPointF(x + labelW, y), value);
     };
@@ -209,20 +207,20 @@ void PpiWidget::drawHud(QPainter &p) {
     const QString blips = QString::number(h.blips)
         + ((h.live && h.blips == 0) ? "!" : "");
 
-    cell(left, 0, "FRAME", QString::number(h.frames));
-    cell(col2, 0, "TOKEN", QString::number(h.token));
-    cell(left, 1, "SECTORS", sectors);
-    cell(col2, 1, "CFAR", cfar);
-    cell(left, 2, "ROTOR",
+    cell(left, 0, "帧号", QString::number(h.frames));
+    cell(col2, 0, "令牌", QString::number(h.token));
+    cell(left, 1, "扇区", sectors);
+    cell(col2, 1, "杂波", cfar);
+    cell(left, 2, "转子",
          QString("%1/%2/%3").arg(h.rotA).arg(h.rotB).arg(h.rotC));
-    cell(col2, 2, "BLIPS", blips);
-    cell(left, 3, "RANGE", QString::number(h.rangeM, 'f', 1) + "m");
-    cell(col2, 3, "SIZE", QString::number(h.pointRadius, 'f', 1));
+    cell(col2, 2, "回波", blips);
+    cell(left, 3, "量程", QString::number(h.rangeM, 'f', 1) + "m");
+    cell(col2, 3, "点径", QString::number(h.pointRadius, 'f', 1));
 
     p.setFont(small);
     p.setPen(kPhosphorDim);
     p.drawText(QPointF(left, ruleY + 6.0 + fm.ascent() + 4.0 * rowH + 2.0),
-               "wheel / i,o  range      [ ]  dot size");
+               "滚轮 / i,o  缩放      [ ]  点大小");
     p.restore();
 }
 

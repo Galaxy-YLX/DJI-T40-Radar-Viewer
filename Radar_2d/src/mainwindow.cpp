@@ -23,7 +23,7 @@ constexpr int kHudRefreshMs = 200;  // status text refresh, decoupled from frame
 
 MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     : QMainWindow(parent), mOffsetDeg(cfg.offsetDeg) {
-    setWindowTitle("DJI T40 — 2D radar (Qt6)");
+    setWindowTitle("大疆 T40 — 侧向雷达 (Qt6)");
     resize(720, 780);
 
     mPpi = new PpiWidget(this);
@@ -33,22 +33,22 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mHud.pointRadius = cfg.pointRadius;
     mPpi->setHud(mHud);
 
-    auto *topBar = new QToolBar("Range", this);
+    auto *topBar = new QToolBar("量程", this);
     topBar->setMovable(false);
     topBar->setFloatable(false);
     topBar->setStyleSheet(
         "QToolBar { background: #000000; border: none;"
-        " font-family: monospace; }"
+        " font-family: 'Noto Sans CJK SC', monospace; }"
         "QToolBar QLabel { color: #00ff66; }");
     addToolBar(Qt::TopToolBarArea, topBar);
 
-    topBar->addWidget(new QLabel("range", topBar));
+    topBar->addWidget(new QLabel("量程", topBar));
     mRangeCombo = new QComboBox(topBar);
     mRangeCombo->setMinimumWidth(100);
     mRangeCombo->setStyleSheet(
         "QComboBox { background-color: #000000; color: #00ff66;"
         " border: 1px solid #0b5c2c; padding: 2px 6px;"
-        " font-family: monospace; }"
+        " font-family: 'Noto Sans CJK SC', monospace; }"
         "QComboBox:hover { border-color: #00ff66; }"
         "QComboBox::drop-down { subcontrol-origin: padding;"
         " subcontrol-position: top right; width: 18px;"
@@ -61,7 +61,7 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
         " color: #00ff66; border: 1px solid #0b5c2c;"
         " selection-background-color: #0b3d20;"
         " selection-color: #00ff66; }");
-    mRangeCombo->setToolTip("scope range limit (wheel / i, o keys also work)");
+    mRangeCombo->setToolTip("显示量程（滚轮或 i / o 键调整）");
     for (int v = kRangeMinM; v <= kRangeMaxM; v += kRangeStepM) {
         mRangeCombo->addItem(QString::number(v) + " m", v);
     }

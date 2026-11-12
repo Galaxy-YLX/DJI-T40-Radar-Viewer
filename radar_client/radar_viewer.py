@@ -802,9 +802,9 @@ def run_both_viewer(top_reader: UDPStreamReader,
     # Section banners (figure-level text; tight-positioned top margin).
     # Panel sub-titles are intentionally omitted below to avoid overlap.
     fig.text(0.27, 0.985, 'SIDE 12×6 rotating',
-             fontsize=10, color='#9db2d3', ha='center', va='top', weight='bold')
+             fontsize=10, color='#9db2d3', ha='center', va='top')
     fig.text(0.76, 0.985, 'TOP 4×4  (1T1R)',
-             fontsize=10, color='#d3af9d', ha='center', va='top', weight='bold')
+             fontsize=10, color='#d3af9d', ha='center', va='top')
 
     # ─── SIDE PPI setup ───
     _ZOOM_PRESETS = [10, 20, 30, 50]
