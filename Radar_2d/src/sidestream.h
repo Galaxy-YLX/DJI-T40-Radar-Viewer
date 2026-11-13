@@ -36,6 +36,10 @@ public:
     void start();                       // bind + register with the streamer
     const SideFrame &latest() const { return mLatest; }
 
+    // Cumulative UDP packet-loss estimate (%%), derived from the streamer's
+    // per-frame token counter. 0.0 until at least two frames are seen.
+    double packetLossPct() const { return mPacketLossPct; }
+
 signals:
     void frameReady();
 
@@ -53,4 +57,11 @@ private:
     int mMinSnr;
     float mMinRangeM;
     SideFrame mLatest;
+
+    // Packet-loss accounting via the monotonic frame token (raw+26).
+    uint16_t mLastToken = 0;        // token of the previous decoded frame
+    bool mHaveToken = false;        // false until the first valid frame
+    qulonglong mExpected = 0;       // frames the streamer is believed to have sent
+    qulonglong mReceived = 0;       // frames we actually received
+    double mPacketLossPct = 0.0;    // 100 * (expected - received) / expected
 };

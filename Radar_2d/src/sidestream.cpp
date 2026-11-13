@@ -59,6 +59,8 @@ void SideStream::start() {
 
 void SideStream::onReadyRead() {
     QByteArray latest;
+    uint16_t latestTok = 0;
+    int burstValid = 0;   // valid frames pulled from the socket this burst
     while (mSocket.hasPendingDatagrams()) {
         const qint64 size = mSocket.pendingDatagramSize();
         if (size <= 0) {
@@ -69,10 +71,32 @@ void SideStream::onReadyRead() {
         mSocket.readDatagram(d.data(), d.size());
         if (d.size() == SIDE_FRAME_SIZE) {
             latest = std::move(d);
+            const auto *raw =
+                reinterpret_cast<const uint8_t *>(latest.constData());
+            latestTok = readU16(raw + 26);   // per-frame token (raw+26)
+            ++burstValid;
         }
     }
     if (!latest.isEmpty()) {
         mLatest = decode(latest, mOffsetDeg, mMinSnr, mMinRangeM);
+        // Packet-loss estimate: the token is a monotonic per-frame counter
+        // maintained by the streamer. Across bursts the number of frames the
+        // streamer should have emitted equals (token - lastToken); the number
+        // we actually received is the datagram count pulled this burst.
+        if (mHaveToken) {
+            const uint16_t delta = uint16_t(latestTok - mLastToken);
+            // Ignore implausible jumps (stream restart / token wrap noise).
+            if (delta >= 1 && delta <= 60000) {
+                mExpected += delta;
+                mReceived += burstValid;
+                if (mExpected > 0) {
+                    mPacketLossPct =
+                        100.0 * double(mExpected - mReceived) / double(mExpected);
+                }
+            }
+        }
+        mLastToken = latestTok;
+        mHaveToken = true;
         emit frameReady();
     }
 }

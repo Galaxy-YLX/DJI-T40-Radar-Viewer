@@ -216,9 +216,14 @@ void PpiWidget::drawHud(QPainter &p) {
     cell(left, 3, "量程", QString::number(h.rangeM, 'f', 1) + "m");
     cell(col2, 3, "点径", QString::number(h.pointRadius, 'f', 1));
 
+    // Packet loss: flagged with '!' once it climbs above a healthy threshold.
+    const QString loss = QString::number(h.packetLossPct, 'f', 1) + "%"
+        + (h.packetLossPct > 2.0 ? "!" : "");
+    cell(left, 4, "丢包率", loss);
+
     p.setFont(small);
     p.setPen(kPhosphorDim);
-    p.drawText(QPointF(left, ruleY + 6.0 + fm.ascent() + 4.0 * rowH + 2.0),
+    p.drawText(QPointF(left, ruleY + 6.0 + fm.ascent() + 5.0 * rowH + 2.0),
                "i / o 键  缩放      [ ]  点大小");
     p.restore();
 }

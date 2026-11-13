@@ -23,13 +23,15 @@ struct HudState {
     int cfarError = 0;
     double rangeM = 0.0;
     double pointRadius = 0.0;
+    double packetLossPct = 0.0;   // UDP packet loss, %% since stream start
 
     bool operator==(const HudState &o) const {
         return live == o.live && demo == o.demo && fps == o.fps &&
                frames == o.frames && blips == o.blips && token == o.token &&
                sectors == o.sectors && rotA == o.rotA && rotB == o.rotB &&
                rotC == o.rotC && cfarError == o.cfarError &&
-               rangeM == o.rangeM && pointRadius == o.pointRadius;
+               rangeM == o.rangeM && pointRadius == o.pointRadius &&
+               packetLossPct == o.packetLossPct;
     }
     bool operator!=(const HudState &o) const { return !(*this == o); }
 };

@@ -137,6 +137,7 @@ void MainWindow::applyFrame(const SideFrame &fr) {
     mHud.rotC = fr.rotAngleC;
     mHud.cfarError = fr.cfarError;
     mHud.blips = int(fr.points.size());
+    mHud.packetLossPct = mStream ? mStream->packetLossPct() : 0.0;
     mPpi->setFrame(fr);
 }
 
