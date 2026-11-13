@@ -212,9 +212,8 @@ class ClientConfig:
     dump_entries: int = 3
     send_motor_start: bool = False
     motor_start_subid: int = 1
-    motor_run_rpm: int = 1200      # rotor speed setpoint sent over CAN while running
+    motor_run_rpm: int = 900       # rotor speed setpoint sent over CAN while running
     motor_stop_rpm: int = 50       # rotor speed setpoint sent at shutdown (idle)
-    motor_speed_hz: float = 5.0    # how often the running setpoint is re-sent
     send_sample_start: bool = False
     send_sample_mark: bool = False
     send_data_start_type: Optional[int] = None
@@ -1023,7 +1022,7 @@ class LivePlotter:
         # the user pick a preset live and pushes it through on_motor_rpm.
         from matplotlib.widgets import Button, RadioButtons
         self.motor_rpm_presets = [600, 900, 1200, 1500, 1800]
-        self.motor_rpm = int(getattr(config, "motor_run_rpm", 1200))
+        self.motor_rpm = int(getattr(config, "motor_run_rpm", 900))
         self.on_motor_rpm = on_motor_rpm
         self._rpm_btn_ax = self.fig.add_axes([0.840, 0.945, 0.140, 0.035])
         self._rpm_btn = Button(self._rpm_btn_ax, f"RPM {self.motor_rpm} ▼")
@@ -2282,18 +2281,15 @@ class RadarClient:
 
     def run(self) -> None:
         self.send_one_shots()
-        motor_speed_interval = 1.0 / max(0.1, self.config.motor_speed_hz)
-        motor_speed_next_at = 0.0
+        # Send the running setpoint exactly once; the ESC holds the last
+        # commanded speed and we do not re-assert it.
+        if self.can_device is not None:
+            self._send_motor_speed_on_can(self.config.motor_run_rpm)
         while True:
             if self.plotter is not None and not self.plotter.is_alive():
                 print("[info] plot window closed, exiting")
                 break
             now = time.monotonic()
-            # Periodically push the running rotor-speed setpoint to the ESC
-            # so it never lapses to its safety-timeout default.
-            if self.can_device is not None and now >= motor_speed_next_at:
-                self._send_motor_speed_on_can(self.config.motor_run_rpm)
-                motor_speed_next_at = now + motor_speed_interval
             timeout = 0.25
             for task in self.tasks:
                 if now >= task.next_at:
@@ -2896,15 +2892,12 @@ def parse_args() -> ClientConfig:
     parser.add_argument("--dump-entries", type=int, default=3)
     parser.add_argument("--send-motor-start", action="store_true")
     parser.add_argument("--motor-start-subid", type=lambda v: int(v, 0), default=1)
-    parser.add_argument("--motor-run-rpm", type=int, default=1200,
+    parser.add_argument("--motor-run-rpm", type=int, default=900,
                         help="Rotor speed setpoint (rpm) sent over CAN while "
-                             "running (default 1200).")
+                             "running (default 900).")
     parser.add_argument("--motor-stop-rpm", type=int, default=50,
                         help="Rotor speed setpoint (rpm) sent at shutdown "
                              "(idle; default 50).")
-    parser.add_argument("--motor-speed-hz", type=float, default=5.0,
-                        help="How often to re-send the running speed setpoint "
-                             "(default 5 Hz).")
     parser.add_argument("--send-sample-start", action="store_true")
     parser.add_argument("--send-sample-mark", action="store_true")
     parser.add_argument("--send-data-start-type", type=int, choices=(0, 1))
@@ -3019,7 +3012,6 @@ def parse_args() -> ClientConfig:
         motor_start_subid=args.motor_start_subid,
         motor_run_rpm=args.motor_run_rpm,
         motor_stop_rpm=args.motor_stop_rpm,
-        motor_speed_hz=args.motor_speed_hz,
         send_sample_start=args.send_sample_start,
         send_sample_mark=args.send_sample_mark,
         send_data_start_type=args.send_data_start_type,
