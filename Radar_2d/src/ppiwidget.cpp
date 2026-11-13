@@ -103,28 +103,6 @@ void PpiWidget::paintEvent(QPaintEvent *) {
     p.setBrush(kPhosphor);
     p.drawPolygon(QPolygonF() << tip << b1 << b2);
 
-    // Rotating sweep arm with a short phosphor afterglow tail.
-    if (mHud.live && mHud.fps > 0.0) {
-        const double scan = std::fmod(double(mHud.rotA), 360.0);
-        constexpr double kTailDeg = 24.0;
-        constexpr int kTailSteps = 8;
-        const QRectF disc(cx - radiusPx, cy - radiusPx,
-                          2.0 * radiusPx, 2.0 * radiusPx);
-        p.setPen(Qt::NoPen);
-        for (int i = 0; i < kTailSteps; ++i) {
-            const double step = kTailDeg / kTailSteps;
-            const int alpha = int(70.0 * (1.0 - double(i) / kTailSteps));
-            p.setBrush(QColor(0, 255, 102, alpha));
-            p.drawPie(disc, int((90.0 - scan + i * step) * 16.0),
-                      int(step * 16.0) + 1);
-        }
-        const double a = scan * kPi / 180.0;
-        p.setPen(QPen(QColor(0, 255, 102, 150), 1.5));
-        p.drawLine(QPointF(cx, cy),
-                   QPointF(cx + radiusPx * std::sin(a),
-                           cy - radiusPx * std::cos(a)));
-    }
-
     // Returns: a soft phosphor halo plus a green core graded by SNR.
     for (const SectorPoint &pt : mPoints) {
         const double rad = pt.azimuthDeg * kPi / 180.0;
@@ -187,7 +165,7 @@ void PpiWidget::drawHud(QPainter &p) {
 
     p.setFont(mono);
     const qreal labelW =
-        fm.horizontalAdvance(QString::fromUtf8("扇区    "));
+        fm.horizontalAdvance(QString::fromUtf8("子类型    "));
     const qreal col2 = left + 136.0;
     auto cell = [&](qreal x, int row, const char *label,
                     const QString &value) {
@@ -199,31 +177,30 @@ void PpiWidget::drawHud(QPainter &p) {
     };
 
     // Single-colour display: abnormal values are flagged with '!'.
-    const QString sectors = QString("%1/360").arg(h.sectors)
-        + ((h.live && h.sectors < 360) ? "!" : "");
-    const QString cfar = QString::number(h.cfarError)
-        + (h.cfarError != 0 ? "!" : "");
+    static const QString kSubtypeNames[] = {
+        QStringLiteral("地面"), QStringLiteral("线"),
+        QStringLiteral("点"), QStringLiteral("?")};
+    const QString subtype = (h.subtype >= 0 && h.subtype <= 2)
+                                ? kSubtypeNames[h.subtype]
+                                : kSubtypeNames[3];
     const QString blips = QString::number(h.blips)
         + ((h.live && h.blips == 0) ? "!" : "");
 
     cell(left, 0, "帧号", QString::number(h.frames));
     cell(col2, 0, "帧序号", QString::number(h.token));
-    cell(left, 1, "扇区", sectors);
-    cell(col2, 1, "杂波", cfar);
-    cell(left, 2, "转角",
-         QString("%1/%2/%3").arg(h.rotA).arg(h.rotB).arg(h.rotC));
-    cell(col2, 2, "回波", blips);
-    cell(left, 3, "量程", QString::number(h.rangeM, 'f', 1) + "m");
-    cell(col2, 3, "点径", QString::number(h.pointRadius, 'f', 1));
+    cell(left, 1, "子类型", subtype);
+    cell(col2, 1, "回波", blips);
+    cell(left, 2, "量程", QString::number(h.rangeM, 'f', 1) + "m");
+    cell(col2, 2, "点径", QString::number(h.pointRadius, 'f', 1));
 
     // Packet loss: flagged with '!' once it climbs above a healthy threshold.
     const QString loss = QString::number(h.packetLossPct, 'f', 1) + "%"
         + (h.packetLossPct > 2.0 ? "!" : "");
-    cell(left, 4, "丢包率", loss);
+    cell(left, 3, "丢包率", loss);
 
     p.setFont(small);
     p.setPen(kPhosphorDim);
-    p.drawText(QPointF(left, ruleY + 6.0 + fm.ascent() + 5.0 * rowH + 2.0),
+    p.drawText(QPointF(left, ruleY + 6.0 + fm.ascent() + 4.0 * rowH + 2.0),
                "i / o 键  缩放      [ ]  点大小");
     p.restore();
 }

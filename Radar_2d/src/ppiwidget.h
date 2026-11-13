@@ -18,9 +18,8 @@ struct HudState {
     int frames = 0;
     int blips = 0;
     int token = 0;
-    int sectors = 0;
-    int rotA = 0, rotB = 0, rotC = 0;
-    int cfarError = 0;
+    int subtype = 0;        // 1E61 subtype: 0=ground 1=wire 2=pcla
+    int entries = 0;        // raw 1E61 entries in the latest frame
     double rangeM = 0.0;
     double pointRadius = 0.0;
     double packetLossPct = 0.0;   // UDP packet loss, %% since stream start
@@ -28,8 +27,7 @@ struct HudState {
     bool operator==(const HudState &o) const {
         return live == o.live && demo == o.demo && fps == o.fps &&
                frames == o.frames && blips == o.blips && token == o.token &&
-               sectors == o.sectors && rotA == o.rotA && rotB == o.rotB &&
-               rotC == o.rotC && cfarError == o.cfarError &&
+               subtype == o.subtype && entries == o.entries &&
                rangeM == o.rangeM && pointRadius == o.pointRadius &&
                packetLossPct == o.packetLossPct;
     }

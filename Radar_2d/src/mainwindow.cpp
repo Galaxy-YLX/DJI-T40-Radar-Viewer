@@ -130,12 +130,9 @@ void MainWindow::syncRangeCombo(double m) {
 void MainWindow::applyFrame(const SideFrame &fr) {
     mFrames++;
     mFrameTimes.push_back(mClock.elapsed());
-    mHud.token = fr.frameToken;
-    mHud.sectors = fr.sectorsDecoded;
-    mHud.rotA = fr.rotAngleA;
-    mHud.rotB = fr.rotAngleB;
-    mHud.rotC = fr.rotAngleC;
-    mHud.cfarError = fr.cfarError;
+    mHud.token = int(fr.frameToken);
+    mHud.subtype = int(fr.subtype);
+    mHud.entries = int(fr.entryCount);
     mHud.blips = int(fr.points.size());
     mHud.packetLossPct = mStream ? mStream->packetLossPct() : 0.0;
     mPpi->setFrame(fr);
@@ -183,9 +180,9 @@ void MainWindow::onDemoTick() {
     }
     SideFrame fr;
     fr.valid = true;
-    fr.sectorsDecoded = 360;
-    fr.frameToken = uint16_t(mDemoN & 0xFFFF);
-    fr.rotAngleA = uint16_t(mDemoN % 360);
+    fr.subtype = 2;  // pcla
+    fr.entryCount = 360;
+    fr.frameToken = uint32_t(mDemoN);
     fr.points = pts;
     applyFrame(fr);
 }

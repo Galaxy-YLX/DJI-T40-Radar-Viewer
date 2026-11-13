@@ -5,27 +5,28 @@
 #include <QVector>
 #include <cstdint>
 
-// One decoded CFAR detection, already in PPI polar coordinates.
+// One decoded detection, already in PPI polar coordinates.
 struct SectorPoint {
     float azimuthDeg = 0.0f;   // 0 = forward (top), increases clockwise
-    float rangeM = 0.0f;       // slant range (m)
-    float snr = 0.0f;          // 0..255
+    float rangeM = 0.0f;       // horizontal range (m)
+    float snr = 0.0f;          // 0..255 (DJI 1E61 metric)
 };
 
-// Decoded 32-byte header + the raw sector points that survive filtering.
+// One decoded DJI 1E61 perception frame (post-CFAR point cloud). This is the
+// radar's real point cloud emitted over UDP 40204 (V2); unlike the on-radar
+// omni snapshot it works on bench units whose encoder->FPGA wire is severed.
 struct SideFrame {
     bool valid = false;
-    uint16_t sectorsDecoded = 0;
-    uint16_t pointCountTotal = 0;
-    uint16_t frameToken = 0;
-    uint16_t rotAngleA = 0, rotAngleB = 0, rotAngleC = 0;
-    uint8_t cfarError = 0;
+    uint8_t subtype = 0;        // 0=ground, 1=wire, 2=pcla
+    uint16_t entryCount = 0;    // raw 1E61 entries in this frame
+    uint32_t frameToken = 0;    // V2 sequence number
     QVector<SectorPoint> points;
 };
 
-// Receives the on-radar `radar_streamer side` UDP stream (port 9877),
-// registers with it, and decodes the latest frame. Emits frameReady() for
-// every decoded frame (single-threaded, all on the Qt event loop).
+// Receives the DJI 1E61 v2 UDP perception stream (port 40204) and decodes
+// the latest frame. Emits frameReady() for every decoded frame (all on the
+// Qt event loop). The radar broadcasts this stream to the host, so no
+// registration handshake is required.
 class SideStream : public QObject {
     Q_OBJECT
 public:
@@ -33,11 +34,10 @@ public:
                         float azimuthOffsetDeg, int minSnr, float minRangeM,
                         QObject *parent = nullptr);
 
-    void start();                       // bind + register with the streamer
+    void start();                       // bind UDP port
     const SideFrame &latest() const { return mLatest; }
 
-    // Cumulative UDP packet-loss estimate (%%), derived from the streamer's
-    // per-frame token counter. 0.0 until at least two frames are seen.
+    // Cumulative UDP packet-loss estimate (%%), derived from V2 seq gaps.
     double packetLossPct() const { return mPacketLossPct; }
 
 signals:
@@ -58,10 +58,15 @@ private:
     float mMinRangeM;
     SideFrame mLatest;
 
-    // Packet-loss accounting via the monotonic frame token (raw+26).
-    uint16_t mLastToken = 0;        // token of the previous decoded frame
-    bool mHaveToken = false;        // false until the first valid frame
-    qulonglong mExpected = 0;       // frames the streamer is believed to have sent
-    qulonglong mReceived = 0;       // frames we actually received
-    double mPacketLossPct = 0.0;    // 100 * (expected - received) / expected
+    // The 1E61 stream interleaves three subtypes (0=ground, 1=wire, 2=pcla)
+    // in separate frames. Keep the latest points per subtype and combine them
+    // so the PPI shows a stable picture instead of flickering one subtype.
+    QVector<SectorPoint> mAccum[3];
+
+    // Packet-loss accounting via V2 sequence numbers.
+    uint32_t mLastSeq = 0;
+    bool mHaveSeq = false;
+    qulonglong mExpected = 0;
+    qulonglong mReceived = 0;
+    double mPacketLossPct = 0.0;
 };

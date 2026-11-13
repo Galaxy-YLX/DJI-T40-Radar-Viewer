@@ -7,24 +7,30 @@
 #include <cstdio>
 #include <cstring>
 
-// Wire constants — must match radar_viewer.py / radar_streamer.c.
+// Wire constants — must match radar_min_client.py's V2 parser and
+// decode_perception_1e61_entries().
 namespace {
-constexpr int SIDE_FRAME_SIZE = 60632;      // 32 header + 360*160 + 250*12
-constexpr int SIDE_HEADER_SIZE = 32;
-constexpr int SIDE_N_SECTORS = 360;
-constexpr int SIDE_SECTOR_DUMP = 160;
-constexpr int SIDE_MAX_PTS_PER_SEC = 7;     // (160 - 15) / 20
-constexpr float SIDE_RANGE_MIN_M = 0.1f;
-constexpr float SIDE_RANGE_MAX_M = 120.0f;
-constexpr float SIDE_DEG_PER_SECTOR = 1.0f;
+constexpr int V2_MSG_OFFSET = 24;      // msg_id (u16 BE) at byte 24
+constexpr int V2_PAYLOAD_OFFSET = 27;  // payload starts at byte 27
+constexpr int V2_SEQ_OFFSET = 7;       // seq (u32 LE) at byte 7
+constexpr int E61_MSG_ID = 0x1E61;
+constexpr int E61_HEADER_LEN = 69;     // 1E61 payload header
+constexpr int E61_SUBTYPE_OFFSET = 65; // subtype byte
+constexpr int E61_ENTRY_LEN = 16;      // <HfffH> per entry
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kRadToDeg = 180.0 / kPi;
 
 uint16_t readU16(const uint8_t *p) {
     return uint16_t(p[0] | (p[1] << 8));
 }
 
+uint32_t readU32(const uint8_t *p) {
+    return uint32_t(p[0]) | (uint32_t(p[1]) << 8)
+         | (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
+}
+
 float readF32(const uint8_t *p) {
-    uint32_t v = uint32_t(p[0]) | (uint32_t(p[1]) << 8)
-               | (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
+    uint32_t v = readU32(p);
     float f;
     std::memcpy(&f, &v, sizeof(f));
     return f;
@@ -44,23 +50,20 @@ SideStream::SideStream(const QString &host, quint16 port, float azimuthOffsetDeg
 
 void SideStream::start() {
     mSocket.setProxy(QNetworkProxy::NoProxy);  // raw UDP, never via a proxy
-    if (!mSocket.bind(QHostAddress::AnyIPv4, 0)) {
-        std::fprintf(stderr, "[side] bind failed: %s\n",
+    // The radar broadcasts the 1E61 stream to the host's port 40204; no
+    // registration byte is needed (unlike the omni "side" streamer).
+    if (!mSocket.bind(QHostAddress::AnyIPv4, mPort)) {
+        std::fprintf(stderr, "[e61] bind UDP :%u failed: %s\n", mPort,
                      mSocket.errorString().toUtf8().constData());
         return;
     }
-    // Send a registration byte so the streamer learns our address and
-    // starts streaming 60632-byte SIDE frames back to us.
-    const QByteArray reg(1, '\0');
-    mSocket.writeDatagram(reg, QHostAddress(mHost), mPort);
-    std::fprintf(stderr, "[side] registered with %s:%u\n",
-                 mHost.toUtf8().constData(), mPort);
+    std::fprintf(stderr, "[e61] listening on UDP :%u (DJI 1E61 v2)\n", mPort);
 }
 
 void SideStream::onReadyRead() {
-    QByteArray latest;
-    uint16_t latestTok = 0;
-    int burstValid = 0;   // valid frames pulled from the socket this burst
+    SideFrame latest;
+    uint32_t latestSeq = 0;
+    int burstValid = 0;   // valid 1E61 frames pulled from the socket this burst
     while (mSocket.hasPendingDatagrams()) {
         const qint64 size = mSocket.pendingDatagramSize();
         if (size <= 0) {
@@ -69,82 +72,121 @@ void SideStream::onReadyRead() {
         QByteArray d;
         d.resize(int(size));
         mSocket.readDatagram(d.data(), d.size());
-        if (d.size() == SIDE_FRAME_SIZE) {
-            latest = std::move(d);
-            const auto *raw =
-                reinterpret_cast<const uint8_t *>(latest.constData());
-            latestTok = readU16(raw + 26);   // per-frame token (raw+26)
-            ++burstValid;
+        SideFrame fr = decode(d, mOffsetDeg, mMinSnr, mMinRangeM);
+        if (!fr.valid) {
+            continue;
         }
+        if (fr.subtype <= 2) {
+            mAccum[fr.subtype] = fr.points;
+        }
+        latest = std::move(fr);
+        latestSeq = latest.frameToken;
+        ++burstValid;
     }
-    if (!latest.isEmpty()) {
-        mLatest = decode(latest, mOffsetDeg, mMinSnr, mMinRangeM);
-        // Packet-loss estimate: the token is a monotonic per-frame counter
-        // maintained by the streamer. Across bursts the number of frames the
-        // streamer should have emitted equals (token - lastToken); the number
-        // we actually received is the datagram count pulled this burst.
-        if (mHaveToken) {
-            const uint16_t delta = uint16_t(latestTok - mLastToken);
-            // Ignore implausible jumps (stream restart / token wrap noise).
-            if (delta >= 1 && delta <= 60000) {
-                mExpected += delta;
-                mReceived += burstValid;
-                if (mExpected > 0) {
-                    mPacketLossPct =
-                        100.0 * double(mExpected - mReceived) / double(mExpected);
-                }
+    if (!latest.valid) {
+        return;
+    }
+
+    // Combine the three subtypes into one stable display frame.
+    latest.points.clear();
+    for (int s = 0; s < 3; ++s) {
+        latest.points += mAccum[s];
+    }
+    mLatest = std::move(latest);
+
+    // Packet-loss estimate from V2 seq gaps between consecutive 1E61 frames.
+    if (mHaveSeq) {
+        const uint32_t delta = latestSeq - mLastSeq;
+        if (delta >= 1 && delta <= 100000) {
+            mExpected += delta;
+            mReceived += burstValid;
+            if (mExpected > 0) {
+                mPacketLossPct =
+                    100.0 * double(mExpected - mReceived) / double(mExpected);
             }
         }
-        mLastToken = latestTok;
-        mHaveToken = true;
-        emit frameReady();
     }
+    mLastSeq = latestSeq;
+    mHaveSeq = true;
+    emit frameReady();
 }
 
 SideFrame SideStream::decode(const QByteArray &datagram, float offsetDeg,
                              int minSnr, float minRangeM) {
     SideFrame fr;
-    if (datagram.size() != SIDE_FRAME_SIZE) {
+    const int len = datagram.size();
+    if (len < V2_PAYLOAD_OFFSET + 2) {
         return fr;
     }
     const auto *raw = reinterpret_cast<const uint8_t *>(datagram.constData());
-    if (raw[0] != 'O' || raw[1] != 'M' || raw[2] != 'N' || raw[3] != 'I') {
-        return fr;  // bad magic
-    }
-    fr.valid = true;
-    fr.rotAngleA = readU16(raw + 8);
-    fr.rotAngleB = readU16(raw + 10);
-    fr.sectorsDecoded = readU16(raw + 12);
-    fr.rotAngleC = readU16(raw + 14);
-    fr.pointCountTotal = readU16(raw + 24);
-    fr.frameToken = readU16(raw + 26);
-    fr.cfarError = raw[28];
 
-    const uint8_t *body = raw + SIDE_HEADER_SIZE;
-    for (int i = 0; i < SIDE_N_SECTORS; ++i) {
-        const uint8_t *s = body + i * SIDE_SECTOR_DUMP;
-        const int count = s[1];
-        const int n = std::min(count, SIDE_MAX_PTS_PER_SEC);
-        for (int pi = 0; pi < n; ++pi) {
-            const int off = 15 + pi * 20;
-            const float r = readF32(s + off);
-            if (!std::isfinite(r) || r < SIDE_RANGE_MIN_M || r > SIDE_RANGE_MAX_M) {
-                continue;
-            }
-            if (r < minRangeM) {
-                continue;
-            }
-            const float snr = float(readU16(s + off + 16));
-            if (snr < minSnr) {
-                continue;
-            }
-            SectorPoint p;
-            p.rangeM = r;
-            p.snr = snr;
-            p.azimuthDeg = float(std::fmod(i * SIDE_DEG_PER_SECTOR + offsetDeg,
-                                           360.0));
-            fr.points.push_back(p);
+    // V2 frame sanity: SOF + version + type, then the full length.
+    if (raw[0] != 0x55) {
+        return fr;
+    }
+    if ((raw[1] & 0x3F) != 0x18) {
+        return fr;
+    }
+    if ((raw[2] & 0x08) != 0x08) {
+        return fr;
+    }
+    const uint16_t totalLen = uint16_t(raw[3] | (raw[4] << 8));
+    if (totalLen != len) {
+        return fr;
+    }
+
+    const uint16_t msgId =
+        uint16_t((raw[V2_MSG_OFFSET] << 8) | raw[V2_MSG_OFFSET + 1]);
+    if (msgId != E61_MSG_ID) {
+        return fr;
+    }
+
+    const uint32_t seq = readU32(raw + V2_SEQ_OFFSET);
+    const int payloadLen = len - V2_PAYLOAD_OFFSET - 2;  // minus CRC16 tail
+    if (payloadLen < E61_HEADER_LEN) {
+        return fr;
+    }
+
+    const uint8_t *payload = raw + V2_PAYLOAD_OFFSET;
+    const int bodyLen = payloadLen - E61_HEADER_LEN;
+    if (bodyLen % E61_ENTRY_LEN != 0) {
+        return fr;
+    }
+    const int count = bodyLen / E61_ENTRY_LEN;
+    const uint8_t subtype = payload[E61_SUBTYPE_OFFSET];
+
+    fr.valid = true;
+    fr.subtype = subtype;
+    fr.entryCount = uint16_t(count);
+    fr.frameToken = seq;
+
+    const uint8_t *body = payload + E61_HEADER_LEN;
+    for (int i = 0; i < count; ++i) {
+        const uint8_t *e = body + i * E61_ENTRY_LEN;
+        // Entry layout <HfffH>: id(u16) x(f32) y(f32) z(f32) metric(u16).
+        const float x = readF32(e + 2);
+        const float y = readF32(e + 6);
+        const float metric = float(readU16(e + 14));
+        const float r = std::sqrt(x * x + y * y);
+        if (!std::isfinite(r) || r < minRangeM) {
+            continue;
         }
+        const float snr = std::clamp(metric, 0.0f, 255.0f);
+        if (snr < minSnr) {
+            continue;
+        }
+        // Radar frame: x = forward, y = right. atan2(y,x) already yields
+        // 0 = forward and increases clockwise, matching the PPI convention.
+        float az = float(std::atan2(y, x) * kRadToDeg);
+        az = float(std::fmod(az + offsetDeg, 360.0));
+        if (az < 0.0f) {
+            az += 360.0f;
+        }
+        SectorPoint p;
+        p.azimuthDeg = az;
+        p.rangeM = r;
+        p.snr = snr;
+        fr.points.push_back(p);
     }
     return fr;
 }

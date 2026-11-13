@@ -868,7 +868,8 @@ def summarize_avoidance_result(msg_id: int, payload: bytes) -> str:
 
 
 class LivePlotter:
-    def __init__(self, config: ClientConfig) -> None:
+    def __init__(self, config: ClientConfig,
+                 on_motor_rpm: Optional[Callable[[int], None]] = None) -> None:
         try:
             import matplotlib
             import matplotlib.pyplot as plt
@@ -1016,6 +1017,51 @@ class LivePlotter:
             plotter_self.fig.canvas.draw_idle()
         self.fig.canvas.mpl_connect('key_press_event', _on_key)
         self._ax_top_cbar_dirty = False
+
+        # ---- rotation-speed dropdown ----
+        # Motor RPM is commanded over CAN by the host client; this widget lets
+        # the user pick a preset live and pushes it through on_motor_rpm.
+        from matplotlib.widgets import Button, RadioButtons
+        self.motor_rpm_presets = [600, 900, 1200, 1500, 1800]
+        self.motor_rpm = int(getattr(config, "motor_run_rpm", 1200))
+        self.on_motor_rpm = on_motor_rpm
+        self._rpm_btn_ax = self.fig.add_axes([0.840, 0.945, 0.140, 0.035])
+        self._rpm_btn = Button(self._rpm_btn_ax, f"RPM {self.motor_rpm} ▼")
+        self._rpm_menu_ax = self.fig.add_axes([0.840, 0.620, 0.140, 0.320])
+        self._rpm_radio = RadioButtons(
+            self._rpm_menu_ax, [f"{r}" for r in self.motor_rpm_presets])
+        self._rpm_menu_ax.set_visible(False)
+        self._rpm_menu_open = False
+        # Suppress the callback that set_active() fires during init so we
+        # don't push a speed command before the bridge is ready.
+        self._rpm_suppress_cb = True
+        try:
+            self._rpm_radio.set_active(self.motor_rpm_presets.index(self.motor_rpm))
+        except ValueError:
+            pass
+        self._rpm_suppress_cb = False
+
+        def _toggle_rpm_menu(_event):
+            self._rpm_menu_open = not self._rpm_menu_open
+            self._rpm_menu_ax.set_visible(self._rpm_menu_open)
+            self.fig.canvas.draw_idle()
+
+        def _on_rpm_select(label):
+            try:
+                rpm = int(str(label))
+            except ValueError:
+                return
+            self.motor_rpm = rpm
+            self._rpm_btn.label.set_text(f"RPM {rpm} ▼")
+            self._rpm_menu_open = False
+            self._rpm_menu_ax.set_visible(False)
+            self.fig.canvas.draw_idle()
+            if self._rpm_suppress_cb or self.on_motor_rpm is None:
+                return
+            self.on_motor_rpm(rpm)
+
+        self._rpm_btn.on_clicked(_toggle_rpm_menu)
+        self._rpm_radio.on_clicked(_on_rpm_select)
 
         self._redraw(force=True)
 
@@ -1625,6 +1671,7 @@ class LivePlotter:
 
         # Info panel
         info_lines = [
+            f"rotor speed: {self.motor_rpm} rpm  [cmd]",
             f"RTI frames: {self.rti_frame_count}",
             f"RTI fps: {self._rti_fps():5.1f} Hz",
             f"history depth: {self.rti_history_len}",
@@ -1822,6 +1869,7 @@ class LivePlotter:
         wire_last_n = sum(len(f["points"]) for f in self.wire_frames)
         stable_count = len(self._extract_stable_reflectors(bin_size=0.5))
         info_lines = [
+            f"rotor speed: {self.motor_rpm} rpm  [cmd]",
             f"last seq: {self.last_seq if self.last_seq is not None else 'n/a'}",
             f"1E61 fps: {self._frame_rate():5.1f} Hz",
             f"latest payload_len: {self.last_payload_len}",
@@ -1996,7 +2044,7 @@ class RadarClient:
         if not config.plot:
             return None
         try:
-            return LivePlotter(config)
+            return LivePlotter(config, on_motor_rpm=self._on_motor_rpm_change)
         except RuntimeError as exc:
             print(f"[warn] live plot disabled: {exc}")
             return None
@@ -2386,6 +2434,16 @@ class RadarClient:
             return
         print(f"[bridge] sent motor_speed={int(rpm)} rpm to ESC "
               f"({len(frame)}B → can_id=0x{self.config.can_tx_id:03X})")
+
+    def _on_motor_rpm_change(self, rpm: int) -> None:
+        """Live rotation-speed change from the plot UI dropdown.
+
+        Updates the running setpoint (so the periodic re-send keeps using it)
+        and pushes it to the ESC immediately.
+        """
+        self.config.motor_run_rpm = int(rpm)
+        self._send_motor_speed_on_can(self.config.motor_run_rpm)
+        print(f"[plot] rotation speed → {self.config.motor_run_rpm} rpm")
 
     def _send_motor_stop_on_can(self) -> None:
         """Emit a final motor_speed setpoint on CAN before releasing the

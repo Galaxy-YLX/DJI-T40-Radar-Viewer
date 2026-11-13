@@ -3,9 +3,9 @@
 #
 # Usage:
 #   ./run.sh                  live mode (default — no argument)
-#   ./run.sh live             full pipeline: env setup + FC client + streamer + viewer
+#   ./run.sh live             2D PPI via the DJI 1E61 v2 stream (UDP 40204)
 #   ./run.sh demo             synthetic points, no radar hardware
-#   ./run.sh dump             env setup + deploy streamer, decode one frame, exit
+#   ./run.sh dump             env setup + FC client, decode one 1E61 frame, exit
 #
 # The live/dump modes automatically check and (re)configure the environment:
 #   - host owns 192.168.8.1  (AR1021x AP)  -> setup/start_ap.sh
@@ -14,7 +14,7 @@
 #
 # Environment overrides:
 #   RADAR_IP (192.168.8.2)   CAN_IFACE (can0)
-#   RANGE (25)  POINT_SIZE (0.5)  AZIMUTH_OFFSET (180)  MIN_SNR (0)  MIN_RANGE (0)
+#   RANGE (25)  POINT_SIZE (0.5)  AZIMUTH_OFFSET (0)  MIN_SNR (0)  MIN_RANGE (0)
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,13 +24,9 @@ RADAR_IP="${RADAR_IP:-192.168.8.2}"
 CAN_IFACE="${CAN_IFACE:-can0}"
 RANGE="${RANGE:-25}"
 POINT_SIZE="${POINT_SIZE:-0.5}"
-AZIMUTH_OFFSET="${AZIMUTH_OFFSET:-180}"
+AZIMUTH_OFFSET="${AZIMUTH_OFFSET:-0}"
 MIN_SNR="${MIN_SNR:-0}"
 MIN_RANGE="${MIN_RANGE:-0}"
-
-VIEWER_ARGS=(--host "$RADAR_IP" --range "$RANGE" --point-size "$POINT_SIZE"
-             --azimuth-offset "$AZIMUTH_OFFSET" --min-snr "$MIN_SNR"
-             --min-range "$MIN_RANGE")
 
 # ── Environment auto-config ─────────────────────────────────────────────
 ensure_env() {
@@ -87,27 +83,32 @@ fi
 MODE="${1:-live}"
 case "$MODE" in
   demo)
-    exec "$BIN" --demo --range "$RANGE" --point-size "$POINT_SIZE"
+    exec "$BIN" --demo --range "$RANGE" --point-size 0.5
     ;;
   dump)
     ensure_env
-    python3 "$ROOT/radar_client/deploy_side_streamer.py" --radar-ip "$RADAR_IP"
-    exec "$BIN" --host "$RADAR_IP" --dump
-    ;;
-  live)
-    ensure_env
-    echo "[run] starting FC client (can-bridge $CAN_IFACE) -> /tmp/radar2d_fc.log"
+    echo "[run] starting FC client (can-bridge $CAN_IFACE, no v2 listen) ..."
     python3 "$ROOT/radar_client/radar_min_client.py" \
-        --can-bridge "$CAN_IFACE" --radar-ip "$RADAR_IP" \
+        --can-bridge "$CAN_IFACE" --radar-ip "$RADAR_IP" --no-v2-listen \
         >/tmp/radar2d_fc.log 2>&1 &
     FC_PID=$!
     trap 'kill "$FC_PID" 2>/dev/null || true' EXIT
 
-    echo "[run] deploying SIDE streamer ..."
-    python3 "$ROOT/radar_client/deploy_side_streamer.py" --radar-ip "$RADAR_IP"
+    exec "$BIN" --host "$RADAR_IP" --dump
+    ;;
+  live)
+    ensure_env
+    echo "[run] starting FC client (can-bridge $CAN_IFACE, no v2 listen) ..."
+    python3 "$ROOT/radar_client/radar_min_client.py" \
+        --can-bridge "$CAN_IFACE" --radar-ip "$RADAR_IP" --no-v2-listen \
+        >/tmp/radar2d_fc.log 2>&1 &
+    FC_PID=$!
+    trap 'kill "$FC_PID" 2>/dev/null || true' EXIT
 
-    echo "[run] launching 2D viewer ..."
-    "$BIN" "${VIEWER_ARGS[@]}"
+    echo "[run] launching 2D viewer (DJI 1E61 v2 stream, UDP 40204) ..."
+    "$BIN" --host "$RADAR_IP" --range "$RANGE" --point-size "$POINT_SIZE" \
+        --azimuth-offset "$AZIMUTH_OFFSET" --min-snr "$MIN_SNR" \
+        --min-range "$MIN_RANGE"
     ;;
   *)
     echo "usage: $0 [demo|live|dump]" >&2

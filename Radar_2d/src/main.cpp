@@ -16,11 +16,11 @@ static Config parseConfig(const QCoreApplication &app) {
         "DJI T40 side radar — 2D PPI (azimuth x range), C++/Qt6");
     p.addHelpOption();
     p.addOptions({
-        {"host", "radar_streamer host (radar IP)", "host", "192.168.8.2"},
-        {"port", "SIDE streamer UDP port", "port", "9877"},
+        {"host", "radar host (radar IP)", "host", "192.168.8.2"},
+        {"port", "DJI 1E61 v2 perception stream UDP port", "port", "40204"},
         {"range", "scope range limit in metres", "m", "25"},
-        {"azimuth-offset", "azimuth offset in degrees (forward -> top)", "deg",
-         "180"},
+        {"azimuth-offset", "azimuth rotation in degrees (forward -> top)", "deg",
+         "0"},
         {"min-snr", "drop detections with SNR below this", "n", "0"},
         {"min-range", "drop detections closer than this (m)", "m", "0"},
         {"point-size", "blip radius in pixels", "px", "0.5"},
@@ -49,10 +49,9 @@ static int runDump(const Config &cfg) {
     QObject::connect(&stream, &SideStream::frameReady, [&]() {
         const SideFrame &fr = stream.latest();
         got = true;
-        std::printf("=== SIDE 2D radar (one frame) ===\n");
-        std::printf("token=%u sectors=%u rot=%u/%u/%u cfar=%u points=%d\n",
-                    fr.frameToken, fr.sectorsDecoded, fr.rotAngleA,
-                    fr.rotAngleB, fr.rotAngleC, fr.cfarError,
+        std::printf("=== 2D radar (1E61 one frame) ===\n");
+        std::printf("seq=%u subtype=%u entries=%u points=%d\n",
+                    fr.frameToken, fr.subtype, fr.entryCount,
                     int(fr.points.size()));
         if (!fr.points.isEmpty()) {
             float rmin = 1e9f, rmax = -1e9f, smin = 1e9f, smax = -1e9f;
