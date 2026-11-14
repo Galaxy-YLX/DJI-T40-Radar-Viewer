@@ -1,0 +1,3 @@
+[submodule "t40-radar-link"]
+	path = t40-radar-link
+	url = https://github.com/Galaxy-YLX/t40-radar-link.git
