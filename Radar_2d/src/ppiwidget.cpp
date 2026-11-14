@@ -90,20 +90,23 @@ void PpiWidget::paintEvent(QPaintEvent *) {
                            cy - radiusPx * std::cos(rad)));
     }
 
-    // Range rings + labels, all green phosphor.
+    // Range rings + labels, all green phosphor. Rings span only the forward
+    // 240° (azimuth 240° → 120° through 0°); the rear wedge is left blank to
+    // match its missing coverage. The outermost boundary is drawn once below
+    // with the azimuth scale, so it is never doubled up.
+    const int startAngle = int((90.0 - kEmptyAzEndDeg) * 16.0);
+    const int spanAngle =
+        int(-(360.0 - (kEmptyAzEndDeg - kEmptyAzStartDeg)) * 16.0);
     QFont small = font();
     small.setPointSizeF(7.5);
     p.setFont(small);
     for (double d = 5.0; d <= mRangeLimit + 1e-6; d += 5.0) {
         const double rp = d / mRangeLimit * radiusPx;
-        p.setPen(QPen(kRing, 1, Qt::SolidLine));
-        // Rings span only the forward 240° (azimuth 240° → 120° through 0°);
-        // the rear wedge is left blank to match its missing coverage.
-        const QRectF ringRect(cx - rp, cy - rp, 2.0 * rp, 2.0 * rp);
-        const int startAngle = int((90.0 - kEmptyAzEndDeg) * 16.0);
-        const int spanAngle =
-            int(-(360.0 - (kEmptyAzEndDeg - kEmptyAzStartDeg)) * 16.0);
-        p.drawArc(ringRect, startAngle, spanAngle);
+        if (d < mRangeLimit - 1e-6) {
+            p.setPen(QPen(kRing, 1, Qt::SolidLine));
+            p.drawArc(QRectF(cx - rp, cy - rp, 2.0 * rp, 2.0 * rp),
+                      startAngle, spanAngle);
+        }
         p.setPen(kScale);
         // Lift the range numbers above the 090 radial, which now carries the
         // outer azimuth ticks and the 090 numeral.
@@ -111,16 +114,14 @@ void PpiWidget::paintEvent(QPaintEvent *) {
                    QString::number(int(d)) + "m");
     }
 
-    // Outer compass scale: a thin arc just beyond the last range ring, 5°
-    // ticks (longer every 10° / 30°) and three-digit bearings every 30°.
-    // As with the rings, the rear wedge (120°..240°) has no coverage and is
-    // left blank; 120° / 240° stay as its boundaries.
-    const double scaleR = radiusPx + 2.0;
-    const QRectF scaleRect(cx - scaleR, cy - scaleR, 2.0 * scaleR,
-                           2.0 * scaleR);
+    // Outermost boundary and compass scale share one circle: the bearing
+    // radials end on it and the azimuth ticks continue outwards from it, so
+    // radials and 30° ticks line up with no gap or doubled arc. The rear
+    // wedge (120°..240°) stays blank; 120° / 240° are its boundaries.
+    const QRectF scaleRect(cx - radiusPx, cy - radiusPx,
+                           2.0 * radiusPx, 2.0 * radiusPx);
     p.setPen(QPen(kRing, 1, Qt::SolidLine));
-    p.drawArc(scaleRect, int((90.0 - kEmptyAzEndDeg) * 16.0),
-              int(-(360.0 - (kEmptyAzEndDeg - kEmptyAzStartDeg)) * 16.0));
+    p.drawArc(scaleRect, startAngle, spanAngle);
 
     for (int a = 0; a < 360; a += 5) {
         if (a > kEmptyAzStartDeg && a < kEmptyAzEndDeg) {
@@ -131,9 +132,9 @@ void PpiWidget::paintEvent(QPaintEvent *) {
         const double rad = a * kPi / 180.0;
         const double s = std::sin(rad), c = std::cos(rad);
         p.setPen(QPen(major ? kScale : kTick, 1.0));
-        p.drawLine(QPointF(cx + scaleR * s, cy - scaleR * c),
-                   QPointF(cx + (scaleR + len) * s,
-                           cy - (scaleR + len) * c));
+        p.drawLine(QPointF(cx + radiusPx * s, cy - radiusPx * c),
+                   QPointF(cx + (radiusPx + len) * s,
+                           cy - (radiusPx + len) * c));
     }
 
     p.setPen(kScale);
