@@ -172,9 +172,6 @@ void FlatView::drawPoints(QPainter &p, const QRectF &plot) {
             : 1.0;
         // Snap to one of kBins discrete distance steps ("分度").
         const int bin = std::min(kBins - 1, int(t * kBins));
-        // Black far-range blips would vanish on the black canvas, so give
-        // only the dark end of the scale a thin rim.
-        p.setPen(t >= 0.7 ? QPen(kDarkOutline, 0.8) : QPen(Qt::NoPen));
         p.setBrush(rangeColor((bin + 0.5) / kBins));
         p.drawEllipse(QPointF(x, y), mPointRadius, mPointRadius);
         ++mShown;
