@@ -19,6 +19,7 @@ constexpr double kEmptyAzEndDeg = 240.0;     // rear-left boundary
 const QColor kGrid(0, 96, 48, 170);      // bearing lines
 const QColor kRing(0, 120, 60, 150);     // range rings
 const QColor kScale(0, 205, 105);        // ring / bearing labels
+const QColor kTick(0, 150, 80, 190);     // minor azimuth ticks
 const QColor kPhosphor(0, 255, 102);     // primary text, strong returns
 const QColor kPhosphorDim(0, 185, 88);   // labels, secondary text
 }  // namespace
@@ -71,7 +72,8 @@ void PpiWidget::paintEvent(QPaintEvent *) {
 
     const double w = width(), h = height();
     const double cx = w / 2.0, cy = h / 2.0;
-    const double radiusPx = std::min(w, h) * 0.5 - 34.0;  // leave room for labels
+    // Extra margin leaves room for the outer azimuth scale and its numerals.
+    const double radiusPx = std::min(w, h) * 0.5 - 52.0;
 
     // Bearing lines (every 30 deg). The rear wedge (120°..240°) has no
     // point-cloud coverage, so its bearing lines are suppressed; the 120°
@@ -102,21 +104,47 @@ void PpiWidget::paintEvent(QPaintEvent *) {
             int(-(360.0 - (kEmptyAzEndDeg - kEmptyAzStartDeg)) * 16.0);
         p.drawArc(ringRect, startAngle, spanAngle);
         p.setPen(kScale);
-        p.drawText(QPointF(cx + rp + 3.0, cy), QString::number(int(d)) + "m");
+        // Lift the range numbers above the 090 radial, which now carries the
+        // outer azimuth ticks and the 090 numeral.
+        p.drawText(QPointF(cx + rp + 3.0, cy - 14.0),
+                   QString::number(int(d)) + "m");
     }
 
-    // Cardinal bearings, just inside the outer ring so they never collide
-    // with the range labels drawn along the 090 radial.
-    p.setPen(kPhosphorDim);
-    for (int a = 0; a < 360; a += 90) {
-        if (a == 180) {
-            continue;   // rear label omitted (no coverage in that wedge)
+    // Outer compass scale: a thin arc just beyond the last range ring, 5°
+    // ticks (longer every 10° / 30°) and three-digit bearings every 30°.
+    // As with the rings, the rear wedge (120°..240°) has no coverage and is
+    // left blank; 120° / 240° stay as its boundaries.
+    const double scaleR = radiusPx + 2.0;
+    const QRectF scaleRect(cx - scaleR, cy - scaleR, 2.0 * scaleR,
+                           2.0 * scaleR);
+    p.setPen(QPen(kRing, 1, Qt::SolidLine));
+    p.drawArc(scaleRect, int((90.0 - kEmptyAzEndDeg) * 16.0),
+              int(-(360.0 - (kEmptyAzEndDeg - kEmptyAzStartDeg)) * 16.0));
+
+    for (int a = 0; a < 360; a += 5) {
+        if (a > kEmptyAzStartDeg && a < kEmptyAzEndDeg) {
+            continue;
+        }
+        const bool major = (a % 30 == 0);
+        const double len = major ? 9.0 : ((a % 10 == 0) ? 6.0 : 3.5);
+        const double rad = a * kPi / 180.0;
+        const double s = std::sin(rad), c = std::cos(rad);
+        p.setPen(QPen(major ? kScale : kTick, 1.0));
+        p.drawLine(QPointF(cx + scaleR * s, cy - scaleR * c),
+                   QPointF(cx + (scaleR + len) * s,
+                           cy - (scaleR + len) * c));
+    }
+
+    p.setPen(kScale);
+    const double labelR = radiusPx + 28.0;
+    for (int a = 0; a < 360; a += 30) {
+        if (a > kEmptyAzStartDeg && a < kEmptyAzEndDeg) {
+            continue;
         }
         const double rad = a * kPi / 180.0;
-        const double lx = cx + (radiusPx - 24.0) * std::sin(rad);
-        const double ly = cy - (radiusPx - 24.0) * std::cos(rad);
-        // Lift the label off the 090/270 radial, where range numbers sit.
-        p.drawText(QPointF(lx - 10.0, ly - 12.0),
+        const double lx = cx + labelR * std::sin(rad);
+        const double ly = cy - labelR * std::cos(rad);
+        p.drawText(QRectF(lx - 16.0, ly - 8.0, 32.0, 16.0), Qt::AlignCenter,
                    QString::number(a).rightJustified(3, QLatin1Char('0')));
     }
 
@@ -163,8 +191,10 @@ void PpiWidget::drawHud(QPainter &p) {
 
     const qreal left = 14.0;
     const qreal right = 292.0;
-    const qreal top = 14.0;
     const qreal rowH = fm.height() + 3.0;
+    // Bottom-left sits over the uncovered rear wedge, so the status card no
+    // longer hides the 300/330 bearings on the outer ring.
+    const qreal top = height() - (5.0 * rowH + 40.0);
 
     const QString title = h.demo ? QString("[ T40雷达 / 演示 ]")
                                  : QString("[ T40雷达 ]");
