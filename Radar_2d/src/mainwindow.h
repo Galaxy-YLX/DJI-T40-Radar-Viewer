@@ -9,6 +9,7 @@
 #include "ppiwidget.h"
 
 class SideStream;
+class FlatView;
 class QTimer;
 class QLabel;
 class QProcess;
@@ -33,6 +34,7 @@ private:
     void setPowerRunning(bool running);
 
     PpiWidget *mPpi;
+    FlatView *mFlat = nullptr;
     SideStream *mStream = nullptr;
     QTimer *mDemoTimer = nullptr;
     QTimer *mHudTimer = nullptr;

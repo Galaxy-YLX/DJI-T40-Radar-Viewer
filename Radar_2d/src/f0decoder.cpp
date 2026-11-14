@@ -170,6 +170,7 @@ SideFrame toSideFrame(const F0Frame &f, float offsetDeg,
         }
         SectorPoint p;
         p.azimuthDeg = azDeg;
+        p.elevationDeg = float(f.el[k] * kRadToDeg);
         p.rangeM = range;
         // The Python view grades c3 by (c3 - threshold)/300 into 16 levels;
         // map the same window onto the PPI's 0..255 brightness scale.

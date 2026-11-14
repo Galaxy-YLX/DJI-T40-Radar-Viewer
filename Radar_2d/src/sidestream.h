@@ -13,6 +13,7 @@ inline constexpr double kBlindEndDeg = 240.0;
 // One decoded detection, already in PPI polar coordinates.
 struct SectorPoint {
     float azimuthDeg = 0.0f;   // 0 = forward (top), increases clockwise
+    float elevationDeg = 0.0f; // + = above horizon, deg
     float rangeM = 0.0f;       // horizontal range (m)
     float snr = 0.0f;          // 0..255 (0x00F0 c3 graded)
 };

@@ -6,6 +6,7 @@
 #include <QPalette>
 #include <QProcess>
 #include <QPushButton>
+#include <QSplitter>
 #include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
@@ -13,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "flatview.h"
 #include "ppiwidget.h"
 #include "sidestream.h"
 
@@ -44,11 +46,16 @@ constexpr const char *kToolBarStyle =
 MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     : QMainWindow(parent), mOffsetDeg(cfg.offsetDeg) {
     setWindowTitle("DJI AESA Digital Radar");
-    resize(720, 780);
+    // Side by side: give the PPI enough width that its HUD card does not
+    // collide with the azimuth ring, and keep the unrolled view wide.
+    resize(1500, 780);
 
     mPpi = new PpiWidget(this);
     mPpi->setPointRadius(cfg.pointRadius);
     mPpi->setFlipLeftRight(cfg.flipLeftRight);
+    mFlat = new FlatView(this);
+    mFlat->setRangeLimit(cfg.rangeM);
+    mFlat->setPointRadius(std::max(2.0, cfg.pointRadius * 3.0));
     mDemoMode = cfg.demo;
     mHud.rangeM = cfg.rangeM;
     mHud.source = cfg.demo ? QStringLiteral("演示") : QStringLiteral("00F0/UDP");
@@ -117,11 +124,31 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mRangeMinus->setFocusPolicy(Qt::NoFocus);
     topBar->addWidget(mRangeMinus);
 
+    topBar->addSeparator();
+    auto *viewToggle = new QPushButton("展开视图", topBar);
+    viewToggle->setCheckable(true);
+    viewToggle->setChecked(true);
+    viewToggle->setFocusPolicy(Qt::NoFocus);
+    viewToggle->setToolTip(
+        "显示/隐藏方位-俯仰平铺视图（横轴 240→120，纵轴 +45→−45）");
+    viewToggle->setStyleSheet(
+        "QPushButton:checked { background-color: #0b3d20;"
+        " border-color: #00ff66; }");
+    topBar->addWidget(viewToggle);
+    connect(viewToggle, &QPushButton::toggled, mFlat, &QWidget::setVisible);
+
     auto *central = new QWidget(this);
     auto *vbox = new QVBoxLayout(central);
     vbox->setContentsMargins(0, 0, 0, 0);
     vbox->setSpacing(0);
-    vbox->addWidget(mPpi, 1);
+    auto *split = new QSplitter(Qt::Horizontal, central);
+    split->setChildrenCollapsible(false);
+    split->addWidget(mPpi);
+    split->addWidget(mFlat);
+    split->setStretchFactor(0, 8);
+    split->setStretchFactor(1, 7);
+    split->setSizes(QList<int>{800, 700});
+    vbox->addWidget(split, 1);
     setCentralWidget(central);
 
     mPpi->setRangeLimit(cfg.rangeM);
@@ -135,6 +162,9 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     });
     connect(mPpi, &PpiWidget::rangeChanged, this,
             &MainWindow::syncRangeDisplay);
+    // The distance colour scale follows the PPI's range rings.
+    connect(mPpi, &PpiWidget::rangeChanged, mFlat,
+            &FlatView::setRangeLimit);
 
     // "开机" starts the FC stand-in that keeps the radar in its working
     // state; "关机" sends SIGTERM so its close() can emit motor_stop and
@@ -231,6 +261,7 @@ void MainWindow::applyFrame(const SideFrame &fr) {
                             : QStringLiteral("00F0/UDP");
     mHud.packetLossPct = mStream ? mStream->packetLossPct() : 0.0;
     mPpi->setFrame(fr);
+    mFlat->setFrame(fr);
 }
 
 void MainWindow::refreshHud() {
@@ -252,6 +283,7 @@ void MainWindow::refreshHud() {
     mHud.frames = mFrames;
     mHud.rangeM = mPpi->rangeLimit();
     mHud.pointRadius = mPpi->pointRadius();
+    mFlat->setPointRadius(std::max(2.0, mPpi->pointRadius() * 3.0));
     mPpi->setHud(mHud);
 }
 
@@ -267,10 +299,15 @@ void MainWindow::onDemoTick() {
     const double phase = mDemoN * 0.02;
     for (int i = -120; i <= 120; ++i) {
         const double az = i * 1.0;
-        const double r = 9.0 + 2.5 * std::sin(3.0 * az * kPi / 180.0 + phase);
+        // Sweep the full range limit so the demo exercises red -> green ->
+        // black, and keep every elevation inside the +/-45 deg window.
+        const double r = 2.5 + 21.0 * (i + 120) / 240.0
+                         + 1.2 * std::sin(3.0 * az * kPi / 180.0 + phase);
+        const double el = 32.0 * std::sin(2.0 * az * kPi / 180.0 + phase);
         const double snr = 60.0 + 90.0 * std::fabs(std::sin(2.0 * az * kPi / 180.0));
         SectorPoint p;
         p.azimuthDeg = float(std::fmod(az + mOffsetDeg + 360.0, 360.0));
+        p.elevationDeg = float(el);
         p.rangeM = float(r);
         p.snr = float(snr);
         pts.push_back(p);

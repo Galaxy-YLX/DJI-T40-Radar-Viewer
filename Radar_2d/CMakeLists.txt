@@ -16,6 +16,8 @@ add_executable(radar2d
     src/f0decoder.cpp
     src/ppiwidget.h
     src/ppiwidget.cpp
+    src/flatview.h
+    src/flatview.cpp
     src/mainwindow.h
     src/mainwindow.cpp
 )
