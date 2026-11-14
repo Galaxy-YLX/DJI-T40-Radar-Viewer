@@ -10,7 +10,8 @@
 
 class SideStream;
 class QTimer;
-class QComboBox;
+class QLabel;
+class QPushButton;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -24,14 +25,15 @@ private slots:
 
 private:
     void applyFrame(const SideFrame &fr);
-    void syncRangeCombo(double m);
+    void syncRangeDisplay(double m);
 
     PpiWidget *mPpi;
     SideStream *mStream = nullptr;
     QTimer *mDemoTimer = nullptr;
     QTimer *mHudTimer = nullptr;
-    QComboBox *mRangeCombo = nullptr;
-    bool mCustomRangeItem = false;
+    QLabel *mRangeValue = nullptr;
+    QPushButton *mRangePlus = nullptr;
+    QPushButton *mRangeMinus = nullptr;
     bool mDemoMode = false;
     QElapsedTimer mClock;
     std::deque<qint64> mFrameTimes;

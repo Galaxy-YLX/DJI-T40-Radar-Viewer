@@ -1,7 +1,8 @@
 #include "mainwindow.h"
 
-#include <QComboBox>
 #include <QLabel>
+#include <QPalette>
+#include <QPushButton>
 #include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
@@ -40,33 +41,40 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     topBar->setStyleSheet(
         "QToolBar { background: #000000; border: none;"
         " font-family: 'Noto Sans CJK SC', monospace; }"
-        "QToolBar QLabel { color: #00ff66; }");
+        "QToolBar QLabel { color: #00ff66; }"
+        "QToolBar QPushButton { background-color: #000000; color: #00ff66;"
+        " border: 1px solid #0b5c2c; min-width: 24px; min-height: 22px;"
+        " margin-left: 2px; font-size: 14px; font-weight: bold; }"
+        "QToolBar QPushButton:hover:enabled { border-color: #00ff66; }"
+        "QToolBar QPushButton:pressed { background-color: #0b3d20; }"
+        "QToolBar QPushButton:disabled { color: #0b5c2c;"
+        " border-color: #062d16; }");
+    QPalette barPal = topBar->palette();
+    barPal.setColor(QPalette::Window, Qt::black);
+    topBar->setPalette(barPal);
+    topBar->setAutoFillBackground(true);
     addToolBar(Qt::TopToolBarArea, topBar);
 
     topBar->addWidget(new QLabel("量程", topBar));
-    mRangeCombo = new QComboBox(topBar);
-    mRangeCombo->setMinimumWidth(100);
-    mRangeCombo->setStyleSheet(
-        "QComboBox { background-color: #000000; color: #00ff66;"
-        " border: 1px solid #0b5c2c; padding: 2px 6px;"
-        " font-family: 'Noto Sans CJK SC', monospace; }"
-        "QComboBox:hover { border-color: #00ff66; }"
-        "QComboBox::drop-down { subcontrol-origin: padding;"
-        " subcontrol-position: top right; width: 18px;"
-        " border-left: 1px solid #0b5c2c; }"
-        "QComboBox::down-arrow {"
-        " border-left: 4px solid transparent;"
-        " border-right: 4px solid transparent;"
-        " border-top: 5px solid #00ff66; }"
-        "QComboBox QAbstractItemView { background-color: #000000;"
-        " color: #00ff66; border: 1px solid #0b5c2c;"
-        " selection-background-color: #0b3d20;"
-        " selection-color: #00ff66; }");
-    mRangeCombo->setToolTip("显示量程（i / o 键或下拉框调整）");
-    for (int v = kRangeMinM; v <= kRangeMaxM; v += kRangeStepM) {
-        mRangeCombo->addItem(QString::number(v) + " m", v);
-    }
-    topBar->addWidget(mRangeCombo);
+    mRangeValue = new QLabel(topBar);
+    mRangeValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    mRangeValue->setMinimumWidth(40);
+    mRangeValue->setStyleSheet("font-size: 15px; font-weight: bold;");
+    mRangeValue->setToolTip("显示量程（i / o 键或 + / - 按钮调整）");
+    topBar->addWidget(mRangeValue);
+    auto *rangeUnit = new QLabel("m", topBar);
+    rangeUnit->setStyleSheet("margin-left: 4px; margin-right: 4px;");
+    topBar->addWidget(rangeUnit);
+
+    mRangePlus = new QPushButton("+", topBar);
+    mRangePlus->setToolTip("量程 +5 m");
+    mRangePlus->setFocusPolicy(Qt::NoFocus);
+    topBar->addWidget(mRangePlus);
+
+    mRangeMinus = new QPushButton("−", topBar);
+    mRangeMinus->setToolTip("量程 -5 m");
+    mRangeMinus->setFocusPolicy(Qt::NoFocus);
+    topBar->addWidget(mRangeMinus);
 
     auto *central = new QWidget(this);
     auto *vbox = new QVBoxLayout(central);
@@ -76,16 +84,16 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     setCentralWidget(central);
 
     mPpi->setRangeLimit(cfg.rangeM);
-    syncRangeCombo(mPpi->rangeLimit());
+    syncRangeDisplay(mPpi->rangeLimit());
 
-    connect(mRangeCombo, &QComboBox::activated, this, [this](int idx) {
-        const QVariant v = mRangeCombo->itemData(idx);
-        if (v.isValid()) {
-            mPpi->setRangeLimit(v.toInt());
-        }
+    connect(mRangePlus, &QPushButton::clicked, this, [this] {
+        mPpi->setRangeLimit(mPpi->rangeLimit() + kRangeStepM);
+    });
+    connect(mRangeMinus, &QPushButton::clicked, this, [this] {
+        mPpi->setRangeLimit(mPpi->rangeLimit() - kRangeStepM);
     });
     connect(mPpi, &PpiWidget::rangeChanged, this,
-            &MainWindow::syncRangeCombo);
+            &MainWindow::syncRangeDisplay);
 
     mClock.start();
     mHudTimer = new QTimer(this);
@@ -104,28 +112,13 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     }
 }
 
-void MainWindow::syncRangeCombo(double m) {
-    const int nearest = std::clamp(
-        int(std::lround(m / kRangeStepM)) * kRangeStepM, kRangeMinM, kRangeMaxM);
-    const int idx = std::abs(m - nearest) < 0.05
-                        ? mRangeCombo->findData(nearest) : -1;
-    const int last = mRangeCombo->count() - 1;
-    if (idx >= 0) {
-        if (mCustomRangeItem) {
-            mRangeCombo->removeItem(last);
-            mCustomRangeItem = false;
-        }
-        mRangeCombo->setCurrentIndex(idx);
-        return;
-    }
-    const QString text = QString::number(m, 'f', 1) + " m";
-    if (mCustomRangeItem) {
-        mRangeCombo->setItemText(last, text);
-    } else {
-        mRangeCombo->addItem(text);
-        mCustomRangeItem = true;
-    }
-    mRangeCombo->setCurrentIndex(mRangeCombo->count() - 1);
+void MainWindow::syncRangeDisplay(double m) {
+    const QString text = std::abs(m - std::round(m)) < 0.05
+                             ? QString::number(int(std::lround(m)))
+                             : QString::number(m, 'f', 1);
+    mRangeValue->setText(text);
+    mRangeMinus->setEnabled(m > kRangeMinM + 0.05);
+    mRangePlus->setEnabled(m < kRangeMaxM - 0.05);
 }
 
 void MainWindow::applyFrame(const SideFrame &fr) {
