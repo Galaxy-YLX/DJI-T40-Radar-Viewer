@@ -231,12 +231,9 @@ void PpiWidget::drawHud(QPainter &p) {
     const qreal left = 14.0;
     const qreal right = 292.0;
     const qreal rowH = fm.height() + 3.0;
-    // Bottom-left sits over the uncovered rear wedge, so the status card no
-    // longer hides the 300/330 bearings on the outer ring.
-    const qreal top = height() - (5.0 * rowH + 40.0);
+    // Status card sits in the top-left corner, just below the range toolbar.
+    const qreal top = 14.0;
 
-    const QString title = h.demo ? QString("[ T40雷达 / 演示 ]")
-                                 : QString("[ T40雷达 ]");
     const QString badge =
         (h.live && !h.sumOk)
             ? QString("[ 校验! ] %1 Hz").arg(h.fps, 0, 'f', 1)
@@ -245,12 +242,11 @@ void PpiWidget::drawHud(QPainter &p) {
                ? QString("[ 实时 ]  %1 Hz").arg(h.fps, 0, 'f', 1)
                : QString("[ 停滞 ]  0.0 Hz"));
 
-    const qreal titleY = top + fm.ascent();
+    const qreal badgeY = top + fm.ascent();
     p.setPen(kPhosphor);
-    p.drawText(QPointF(left, titleY), title);
-    p.drawText(QPointF(right - fm.horizontalAdvance(badge), titleY), badge);
+    p.drawText(QPointF(right - fm.horizontalAdvance(badge), badgeY), badge);
 
-    const qreal ruleY = titleY + fm.descent() + 4.0;
+    const qreal ruleY = badgeY + fm.descent() + 4.0;
     p.setPen(QPen(kPhosphorDim, 1.0));
     p.drawLine(QPointF(left, ruleY), QPointF(right, ruleY));
 

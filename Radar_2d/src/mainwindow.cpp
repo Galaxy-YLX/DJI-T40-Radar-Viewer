@@ -40,7 +40,7 @@ constexpr const char *kToolBarStyle =
 
 MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     : QMainWindow(parent), mOffsetDeg(cfg.offsetDeg) {
-    setWindowTitle("大疆 T40 — 侧向雷达 (Qt6)");
+    setWindowTitle("DJI AESA Digital Radar");
     resize(720, 780);
 
     mPpi = new PpiWidget(this);
