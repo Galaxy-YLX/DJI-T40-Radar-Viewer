@@ -9,6 +9,7 @@
 
 namespace {
 constexpr double kPi = 3.14159265358979323846;
+constexpr double kRangeStepM = 5.0;   // one key press = one toolbar step
 
 // 1E61 perception covers only azimuth ±120° about forward, so the rear
 // wedge (120°..240°) carries no points and its grid lines are left blank.
@@ -251,16 +252,16 @@ void PpiWidget::drawHud(QPainter &p) {
     p.setFont(small);
     p.setPen(kPhosphorDim);
     p.drawText(QPointF(left, ruleY + 6.0 + fm.ascent() + 4.0 * rowH + 2.0),
-               "i / o 键  缩放      [ ]  点大小      f 翻转");
+               "i / o 键  量程±5m    [ ]  点大小    f 翻转");
     p.restore();
 }
 
 void PpiWidget::keyPressEvent(QKeyEvent *ev) {
     const QString k = ev->text();
     if (k == "i" || k == "I") {
-        setRangeLimit(mRangeLimit / 1.1);
+        setRangeLimit(mRangeLimit - kRangeStepM);
     } else if (k == "o" || k == "O") {
-        setRangeLimit(mRangeLimit * 1.1);
+        setRangeLimit(mRangeLimit + kRangeStepM);
     } else if (k == "]" || k == "+" || k == "=") {
         setPointRadius(mPointRadius * 1.25);
     } else if (k == "[" || k == "-") {
