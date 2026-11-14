@@ -1,11 +1,18 @@
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QCoreApplication>
 #include <QEventLoop>
+#include <QFile>
+#include <QStringList>
 #include <QTimer>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <cstring>
 
 #include "config.h"
+#include "f0decoder.h"
+#include "linkstream.h"
 #include "mainwindow.h"
 #include "sidestream.h"
 
@@ -13,17 +20,23 @@ static Config parseConfig(const QCoreApplication &app) {
     Config cfg;
     QCommandLineParser p;
     p.setApplicationDescription(
-        "DJI T40 side radar — 2D PPI (azimuth x range), C++/Qt6");
+        "DJI T40 radar — 2D PPI (azimuth x range), C++/Qt6, 0x00F0 point cloud");
     p.addHelpOption();
     p.addOptions({
-        {"host", "radar host (radar IP)", "host", "192.168.8.2"},
-        {"port", "DJI 1E61 v2 perception stream UDP port", "port", "40204"},
+        {"src", "point cloud source: link (board TCP 46000) | udp (radar 40204)",
+         "link|udp", "link"},
+        {"link-host", "t40-radar-link board address", "host", "192.168.9.1"},
+        {"link-port", "T40R forwarding TCP port", "port", "46000"},
+        {"host", "radar host (UDP source only)", "host", "192.168.8.2"},
+        {"port", "radar perception UDP port (UDP source only)", "port", "40204"},
         {"range", "scope range limit in metres", "m", "25"},
         {"azimuth-offset", "azimuth rotation in degrees (forward -> top)", "deg",
          "0"},
-        {"min-snr", "drop detections with SNR below this", "n", "0"},
+        {"min-snr", "1E61: drop detections with SNR below this", "n", "0"},
+        {"min-amp", "0x00F0: drop points with c3 below this", "n", "80"},
         {"min-range", "drop detections closer than this (m)", "m", "0"},
         {"point-size", "blip radius in pixels", "px", "0.5"},
+        {"rpm", "motor rpm sent over the link on power-on", "rpm", "1200"},
         {"can-iface", "SocketCAN interface used by the FC bridge", "iface",
          "can0"},
         {"fc-client", "path to radar_min_client.py (empty = auto)", "path", ""},
@@ -31,56 +44,158 @@ static Config parseConfig(const QCoreApplication &app) {
         {"no-flip", "disable the left-right mirror"},
         {"demo", "render synthetic points (no radar hardware)"},
         {"dump", "decode one frame as text and exit"},
+        {"selftest", "verify 0x00F0 decoding: frames.bin:expected.txt", "spec",
+         ""},
     });
     p.process(app);
 
+    const QString src = p.value("src");
+    if (src != QStringLiteral("link") && src != QStringLiteral("udp")) {
+        std::fprintf(stderr, "unknown --src '%s', using link\n",
+                     qPrintable(src));
+    }
+    cfg.source = src == QStringLiteral("udp") ? Source::Udp : Source::Link;
+    cfg.linkHost = p.value("link-host");
+    cfg.linkPort = p.value("link-port").toUShort();
     cfg.host = p.value("host");
     cfg.port = p.value("port").toUShort();
     cfg.rangeM = p.value("range").toDouble();
     cfg.offsetDeg = p.value("azimuth-offset").toDouble();
     cfg.minSnr = p.value("min-snr").toInt();
+    cfg.minAmp = p.value("min-amp").toInt();
     cfg.minRangeM = p.value("min-range").toFloat();
     cfg.pointRadius = p.value("point-size").toDouble();
+    cfg.rpm = p.value("rpm").toInt();
     cfg.canIface = p.value("can-iface");
     cfg.fcClient = p.value("fc-client");
     cfg.demo = p.isSet("demo");
     cfg.dump = p.isSet("dump");
+    cfg.selftest = p.value("selftest");
     cfg.flipLeftRight = !p.isSet("no-flip");
     return cfg;
 }
 
-static int runDump(const Config &cfg) {
-    SideStream stream(cfg.host, cfg.port, float(cfg.offsetDeg), cfg.minSnr,
-                      cfg.minRangeM);
+static void printFrame(const SideFrame &fr) {
+    const char *src = fr.source == PointSource::E61 ? "1E61/UDP"
+                    : fr.source == PointSource::F0Udp ? "00F0/UDP"
+                                                      : "00F0/link";
+    std::printf("=== 2D radar one frame (%s) ===\n", src);
+    std::printf("seq=%u entries=%u points=%d sum_ok=%d rpm=%.1f\n",
+                fr.frameToken, fr.entryCount, int(fr.points.size()),
+                int(fr.sumOk), fr.rpm);
+    if (!fr.points.isEmpty()) {
+        float rmin = 1e9f, rmax = -1e9f, smin = 1e9f, smax = -1e9f;
+        for (const SectorPoint &pt : fr.points) {
+            rmin = std::min(rmin, pt.rangeM);
+            rmax = std::max(rmax, pt.rangeM);
+            smin = std::min(smin, pt.snr);
+            smax = std::max(smax, pt.snr);
+        }
+        std::printf("  range: %.2f .. %.2f m   brightness: %.0f .. %.0f\n",
+                    rmin, rmax, smin, smax);
+    }
+}
+
+template <class Stream>
+static int runDumpWith(Stream &stream) {
     QEventLoop loop;
     bool got = false;
-    QObject::connect(&stream, &SideStream::frameReady, [&]() {
-        const SideFrame &fr = stream.latest();
+    QObject::connect(&stream, &Stream::frameReady, [&]() {
         got = true;
-        std::printf("=== 2D radar (1E61 one frame) ===\n");
-        std::printf("seq=%u subtype=%u entries=%u points=%d\n",
-                    fr.frameToken, fr.subtype, fr.entryCount,
-                    int(fr.points.size()));
-        if (!fr.points.isEmpty()) {
-            float rmin = 1e9f, rmax = -1e9f, smin = 1e9f, smax = -1e9f;
-            for (const SectorPoint &pt : fr.points) {
-                rmin = std::min(rmin, pt.rangeM);
-                rmax = std::max(rmax, pt.rangeM);
-                smin = std::min(smin, pt.snr);
-                smax = std::max(smax, pt.snr);
-            }
-            std::printf("  range: %.2f .. %.2f m   snr: %.0f .. %.0f\n",
-                        rmin, rmax, smin, smax);
-        }
+        printFrame(stream.latest());
         loop.quit();
     });
     QTimer::singleShot(8000, &loop, &QEventLoop::quit);
     stream.start();
     loop.exec();
+    stream.stop();
     if (!got) {
-        std::printf("no side frame within 8s — is the streamer running?\n");
+        std::printf("no point-cloud frame within 8s — is the radar streaming?\n");
     }
     return got ? 0 : 1;
+}
+
+static int runDump(const Config &cfg) {
+    if (cfg.source == Source::Link) {
+        LinkStream stream(cfg.linkHost, cfg.linkPort, float(cfg.offsetDeg),
+                          cfg.minAmp, cfg.minRangeM);
+        return runDumpWith(stream);
+    }
+    SideStream stream(cfg.host, cfg.port, float(cfg.offsetDeg), cfg.minSnr,
+                      cfg.minAmp, cfg.minRangeM);
+    return runDumpWith(stream);
+}
+
+// Cross-check the C++ decoder against the real 0x00F0 frames and expected
+// values shipped with t40-radar-link (generated by its Python decoder).
+static int runSelftest(const QString &spec) {
+    const QStringList paths = spec.split(QLatin1Char(':'));
+    if (paths.size() != 2) {
+        std::fprintf(stderr, "--selftest expects frames.bin:expected.txt\n");
+        return 2;
+    }
+    QFile fb(paths.at(0)), fe(paths.at(1));
+    if (!fb.open(QIODevice::ReadOnly) || !fe.open(QIODevice::ReadOnly)) {
+        std::fprintf(stderr, "cannot open test vectors: %s / %s\n",
+                     qPrintable(paths.at(0)), qPrintable(paths.at(1)));
+        return 2;
+    }
+    const QByteArray bin = fb.readAll();
+    const QStringList lines =
+        QString::fromUtf8(fe.readAll()).split(QLatin1Char('\n'));
+
+    int checked = 0, failed = 0;
+    int off = 0;
+    for (const QString &line : lines) {
+        if (line.trimmed().isEmpty() || line.trimmed().startsWith(QLatin1Char('#'))) {
+            continue;
+        }
+        const QStringList v = line.trimmed().split(QLatin1Char(' '),
+                                                  Qt::SkipEmptyParts);
+        if (v.size() < 9 || off + 4 > bin.size()) {
+            ++failed;
+            continue;
+        }
+        const uint8_t *p = reinterpret_cast<const uint8_t *>(bin.constData()) + off;
+        const quint32 len = quint32(p[0]) | (quint32(p[1]) << 8)
+                          | (quint32(p[2]) << 16) | (quint32(p[3]) << 24);
+        off += 4;
+        if (len == 0 || off + int(len) > bin.size()) {
+            ++failed;
+            continue;
+        }
+        const F0Frame f = F0::decode(
+            reinterpret_cast<const uint8_t *>(bin.constData()) + off, int(len));
+        off += int(len);
+        const double rpm = F0::rpmFromC5(f);
+        const int frame = checked;
+        ++checked;
+        auto near = [&](const char *what, double got, double want, double tol) {
+            if (!f.valid || std::fabs(got - want) > tol) {
+                std::fprintf(stderr, "frame %d %s: got %.6f want %.6f\n",
+                             frame, what, got, want);
+                ++failed;
+            }
+        };
+        if (!f.valid || f.n != v.at(0).toInt()
+            || int(f.sumOk) != v.at(1).toInt() || f.seq != v.at(2).toInt()) {
+            std::fprintf(stderr, "frame %d header mismatch\n", frame);
+            ++failed;
+            continue;
+        }
+        if (f.n == 0) {
+            continue;
+        }
+        near("az0", f.az[0], v.at(3).toDouble(), 1e-4);
+        near("el0", f.el[0], v.at(4).toDouble(), 1e-4);
+        near("r0", f.r[0], v.at(5).toDouble(), 2e-3);
+        near("c30", f.c3[0], v.at(6).toDouble(), 0.5);
+        near("c50", f.c5[0], v.at(7).toDouble(), 0.5);
+        near("rpm", rpm, v.at(8).toDouble(),
+             std::max(0.5, v.at(8).toDouble() * 1e-3));
+    }
+    std::printf("selftest: %d frames, %d failures\n", checked, failed);
+    return (checked >= 10 && failed == 0) ? 0 : 1;
 }
 
 int main(int argc, char **argv) {
@@ -88,6 +203,9 @@ int main(int argc, char **argv) {
     QCoreApplication::setApplicationName("radar2d");
     const Config cfg = parseConfig(app);
 
+    if (!cfg.selftest.isEmpty()) {
+        return runSelftest(cfg.selftest);
+    }
     if (cfg.dump) {
         return runDump(cfg);
     }

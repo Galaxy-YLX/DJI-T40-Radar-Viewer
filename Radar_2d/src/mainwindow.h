@@ -9,6 +9,7 @@
 #include "ppiwidget.h"
 
 class SideStream;
+class LinkStream;
 class QTimer;
 class QLabel;
 class QProcess;
@@ -34,6 +35,7 @@ private:
 
     PpiWidget *mPpi;
     SideStream *mStream = nullptr;
+    LinkStream *mLink = nullptr;
     QTimer *mDemoTimer = nullptr;
     QTimer *mHudTimer = nullptr;
     QProcess *mFcProcess = nullptr;
@@ -51,5 +53,6 @@ private:
     HudState mHud;
     int mFrames = 0;
     int mDemoN = 0;
+    int mRpm = 1200;
     double mOffsetDeg;
 };

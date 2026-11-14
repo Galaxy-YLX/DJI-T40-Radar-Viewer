@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "f0decoder.h"
+
 // Wire constants — must match radar_min_client.py's V2 parser and
 // decode_perception_1e61_entries().
 namespace {
@@ -38,12 +40,13 @@ float readF32(const uint8_t *p) {
 }  // namespace
 
 SideStream::SideStream(const QString &host, quint16 port, float azimuthOffsetDeg,
-                       int minSnr, float minRangeM, QObject *parent)
+                       int minSnr, int minAmp, float minRangeM, QObject *parent)
     : QObject(parent),
       mHost(host),
       mPort(port),
       mOffsetDeg(azimuthOffsetDeg),
       mMinSnr(minSnr),
+      mMinAmp(minAmp),
       mMinRangeM(minRangeM) {
     connect(&mSocket, &QUdpSocket::readyRead, this, &SideStream::onReadyRead);
 }
@@ -57,7 +60,8 @@ void SideStream::start() {
                      mSocket.errorString().toUtf8().constData());
         return;
     }
-    std::fprintf(stderr, "[e61] listening on UDP :%u (DJI 1E61 v2)\n", mPort);
+    std::fprintf(stderr, "[udp] listening on UDP :%u (0x00F0 point cloud / 1E61)\n",
+                 mPort);
 }
 
 void SideStream::onReadyRead() {
@@ -74,9 +78,19 @@ void SideStream::onReadyRead() {
         mSocket.readDatagram(d.data(), d.size());
         SideFrame fr = decode(d, mOffsetDeg, mMinSnr, mMinRangeM);
         if (!fr.valid) {
+            // The same UDP port also carries the 0x00F0 black-box point
+            // cloud decoded by t40-radar-link.
+            const F0Frame f0 = F0::decode(
+                reinterpret_cast<const uint8_t *>(d.constData()), d.size());
+            if (f0.valid) {
+                fr = F0::toSideFrame(f0, PointSource::F0Udp, mOffsetDeg,
+                                     mMinAmp, mMinRangeM);
+            }
+        }
+        if (!fr.valid) {
             continue;
         }
-        if (fr.subtype <= 2) {
+        if (fr.source == PointSource::E61 && fr.subtype <= 2) {
             mAccum[fr.subtype] = fr.points;
         }
         latest = std::move(fr);
@@ -87,16 +101,20 @@ void SideStream::onReadyRead() {
         return;
     }
 
-    // Combine the three subtypes into one stable display frame.
-    latest.points.clear();
-    for (int s = 0; s < 3; ++s) {
-        latest.points += mAccum[s];
+    if (latest.source == PointSource::E61) {
+        // Combine the three subtypes into one stable display frame.
+        latest.points.clear();
+        for (int s = 0; s < 3; ++s) {
+            latest.points += mAccum[s];
+        }
     }
     mLatest = std::move(latest);
 
-    // Packet-loss estimate from V2 seq gaps between consecutive 1E61 frames.
+    // Packet-loss estimate from sequence gaps (u32 for 1E61, u16 for 0x00F0).
     if (mHaveSeq) {
-        const uint32_t delta = latestSeq - mLastSeq;
+        const uint32_t delta = latest.source == PointSource::E61
+            ? latestSeq - mLastSeq
+            : uint32_t(uint16_t(latestSeq - mLastSeq));
         if (delta >= 1 && delta <= 100000) {
             mExpected += delta;
             mReceived += burstValid;

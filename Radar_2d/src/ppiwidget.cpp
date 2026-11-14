@@ -11,11 +11,6 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kRangeStepM = 5.0;   // one key press = one toolbar step
 
-// 1E61 perception covers only azimuth ±120° about forward, so the rear
-// wedge (120°..240°) carries no points and its grid lines are left blank.
-constexpr double kEmptyAzStartDeg = 120.0;   // rear-right boundary
-constexpr double kEmptyAzEndDeg = 240.0;     // rear-left boundary
-
 // Classic monochrome radar: pure black canvas, green phosphor only.
 const QColor kGrid(0, 96, 48, 170);      // bearing lines
 const QColor kRing(0, 120, 60, 150);     // range rings
@@ -32,7 +27,28 @@ PpiWidget::PpiWidget(QWidget *parent) : QWidget(parent) {
 
 void PpiWidget::setFrame(const SideFrame &fr) {
     mPoints = fr.points;
+    mBlindStartDeg = fr.blindStartDeg;
+    mBlindEndDeg = fr.blindEndDeg;
     update();
+}
+
+bool PpiWidget::inBlind(double azDeg) const {
+    if (mBlindStartDeg < mBlindEndDeg) {
+        return azDeg > mBlindStartDeg && azDeg < mBlindEndDeg;
+    }
+    // The 0x00F0 no-data wedge straddles 0 degrees (forward).
+    return azDeg > mBlindStartDeg || azDeg < mBlindEndDeg;
+}
+
+double PpiWidget::arcStartAngle() const {
+    // Screen azimuth 0 is up; Qt arcs start at 3 o'clock and count CCW.
+    return (90.0 - mBlindEndDeg) * 16.0;
+}
+
+double PpiWidget::arcSpanAngle() const {
+    const double covered = mBlindStartDeg - mBlindEndDeg
+                         + (mBlindStartDeg < mBlindEndDeg ? 360.0 : 0.0);
+    return -covered * 16.0;
 }
 
 void PpiWidget::setHud(const HudState &hud) {
@@ -76,12 +92,10 @@ void PpiWidget::paintEvent(QPaintEvent *) {
     // Extra margin leaves room for the outer azimuth scale and its numerals.
     const double radiusPx = std::min(w, h) * 0.5 - 52.0;
 
-    // Bearing lines (every 30 deg). The rear wedge (120°..240°) has no
-    // point-cloud coverage, so its bearing lines are suppressed; the 120°
-    // and 240° radials remain as the coverage boundary.
+    // Bearing lines (every 30 deg), skipping the source's no-data wedge.
     p.setPen(QPen(kGrid, 1));
     for (int a = 0; a < 360; a += 30) {
-        if (a > kEmptyAzStartDeg && a < kEmptyAzEndDeg) {
+        if (inBlind(a)) {
             continue;
         }
         const double rad = a * kPi / 180.0;
@@ -90,13 +104,11 @@ void PpiWidget::paintEvent(QPaintEvent *) {
                            cy - radiusPx * std::cos(rad)));
     }
 
-    // Range rings + labels, all green phosphor. Rings span only the forward
-    // 240° (azimuth 240° → 120° through 0°); the rear wedge is left blank to
-    // match its missing coverage. The outermost boundary is drawn once below
-    // with the azimuth scale, so it is never doubled up.
-    const int startAngle = int((90.0 - kEmptyAzEndDeg) * 16.0);
-    const int spanAngle =
-        int(-(360.0 - (kEmptyAzEndDeg - kEmptyAzStartDeg)) * 16.0);
+    // Range rings + labels, all green phosphor. Rings span only the sector
+    // covered by the current point-cloud source. The outermost boundary is
+    // drawn once below with the azimuth scale, so it is never doubled up.
+    const int startAngle = int(arcStartAngle());
+    const int spanAngle = int(arcSpanAngle());
     QFont small = font();
     small.setPointSizeF(7.5);
     p.setFont(small);
@@ -116,15 +128,15 @@ void PpiWidget::paintEvent(QPaintEvent *) {
 
     // Outermost boundary and compass scale share one circle: the bearing
     // radials end on it and the azimuth ticks continue outwards from it, so
-    // radials and 30° ticks line up with no gap or doubled arc. The rear
-    // wedge (120°..240°) stays blank; 120° / 240° are its boundaries.
+    // radials and 30° ticks line up with no gap or doubled arc. Only the
+    // source's covered sector is drawn; its no-data wedge stays blank.
     const QRectF scaleRect(cx - radiusPx, cy - radiusPx,
                            2.0 * radiusPx, 2.0 * radiusPx);
     p.setPen(QPen(kRing, 1, Qt::SolidLine));
     p.drawArc(scaleRect, startAngle, spanAngle);
 
     for (int a = 0; a < 360; a += 5) {
-        if (a > kEmptyAzStartDeg && a < kEmptyAzEndDeg) {
+        if (inBlind(a)) {
             continue;
         }
         const bool major = (a % 30 == 0);
@@ -140,7 +152,7 @@ void PpiWidget::paintEvent(QPaintEvent *) {
     p.setPen(kScale);
     const double labelR = radiusPx + 28.0;
     for (int a = 0; a < 360; a += 30) {
-        if (a > kEmptyAzStartDeg && a < kEmptyAzEndDeg) {
+        if (inBlind(a)) {
             continue;
         }
         const double rad = a * kPi / 180.0;
@@ -201,10 +213,13 @@ void PpiWidget::drawHud(QPainter &p) {
     const QString title = h.demo ? QString("[ T40雷达 / 演示 ]")
                                  : QString("[ T40雷达 ]");
     const QString badge =
-        !h.live ? QString("[ 等待 ]  --.- Hz")
-                : (streaming
-                       ? QString("[ 实时 ]  %1 Hz").arg(h.fps, 0, 'f', 1)
-                       : QString("[ 停滞 ]  0.0 Hz"));
+        !h.linkUp ? QString("[ 断链 ]  --.- Hz")
+        : (h.live && !h.sumOk)
+            ? QString("[ 校验! ] %1 Hz").arg(h.fps, 0, 'f', 1)
+        : !h.live ? QString("[ 等待 ]  --.- Hz")
+        : (streaming
+               ? QString("[ 实时 ]  %1 Hz").arg(h.fps, 0, 'f', 1)
+               : QString("[ 停滞 ]  0.0 Hz"));
 
     const qreal titleY = top + fm.ascent();
     p.setPen(kPhosphor);
@@ -229,18 +244,12 @@ void PpiWidget::drawHud(QPainter &p) {
     };
 
     // Single-colour display: abnormal values are flagged with '!'.
-    static const QString kSubtypeNames[] = {
-        QStringLiteral("地面"), QStringLiteral("线"),
-        QStringLiteral("点"), QStringLiteral("?")};
-    const QString subtype = (h.subtype >= 0 && h.subtype <= 2)
-                                ? kSubtypeNames[h.subtype]
-                                : kSubtypeNames[3];
     const QString blips = QString::number(h.blips)
         + ((h.live && h.blips == 0) ? "!" : "");
 
     cell(left, 0, "帧号", QString::number(h.frames));
     cell(col2, 0, "帧序号", QString::number(h.token));
-    cell(left, 1, "子类型", subtype);
+    cell(left, 1, "源", h.source);
     cell(col2, 1, "回波", blips);
     cell(left, 2, "量程", QString::number(h.rangeM, 'f', 1) + "m");
     cell(col2, 2, "点径", QString::number(h.pointRadius, 'f', 1));
@@ -249,6 +258,9 @@ void PpiWidget::drawHud(QPainter &p) {
     const QString loss = QString::number(h.packetLossPct, 'f', 1) + "%"
         + (h.packetLossPct > 2.0 ? "!" : "");
     cell(left, 3, "丢包率", loss);
+    cell(col2, 3, "转速", h.rpm > 0.0
+         ? QString::number(int(h.rpm + 0.5)) + "rpm"
+         : QString::fromUtf8("—"));
 
     p.setFont(small);
     p.setPen(kPhosphorDim);

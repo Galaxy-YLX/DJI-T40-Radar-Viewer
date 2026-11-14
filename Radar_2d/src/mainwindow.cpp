@@ -13,10 +13,20 @@
 #include <cmath>
 #include <cstdio>
 
+#include "linkstream.h"
 #include "ppiwidget.h"
 #include "sidestream.h"
 
 namespace {
+QString sourceLabel(PointSource s) {
+    switch (s) {
+    case PointSource::F0Link: return QStringLiteral("00F0/链路");
+    case PointSource::F0Udp:  return QStringLiteral("00F0/UDP");
+    case PointSource::E61:    return QStringLiteral("1E61/UDP");
+    }
+    return QStringLiteral("?");
+}
+
 constexpr double kPi = 3.14159265358979323846;
 constexpr int kRangeMinM = 5;
 constexpr int kRangeMaxM = 50;
@@ -47,7 +57,12 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mPpi->setPointRadius(cfg.pointRadius);
     mPpi->setFlipLeftRight(cfg.flipLeftRight);
     mDemoMode = cfg.demo;
+    mRpm = cfg.rpm;
     mHud.rangeM = cfg.rangeM;
+    mHud.source = cfg.demo ? QStringLiteral("演示")
+                : (cfg.source == Source::Link ? QStringLiteral("00F0/链路")
+                                              : QStringLiteral("UDP/自动"));
+    mHud.linkUp = cfg.demo || cfg.source != Source::Link;
     mHud.pointRadius = cfg.pointRadius;
     mPpi->setHud(mHud);
 
@@ -155,9 +170,18 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
         mDemoTimer = new QTimer(this);
         connect(mDemoTimer, &QTimer::timeout, this, &MainWindow::onDemoTick);
         mDemoTimer->start(80);
+    } else if (cfg.source == Source::Link) {
+        mLink = new LinkStream(cfg.linkHost, cfg.linkPort,
+                               float(cfg.offsetDeg), cfg.minAmp,
+                               cfg.minRangeM, this);
+        connect(mLink, &LinkStream::frameReady, this,
+                &MainWindow::onFrameReady);
+        connect(mLink, &LinkStream::stateChanged, this,
+                &MainWindow::refreshHud);
+        mLink->start();
     } else {
         mStream = new SideStream(cfg.host, cfg.port, float(cfg.offsetDeg),
-                                 cfg.minSnr, cfg.minRangeM, this);
+                                 cfg.minSnr, cfg.minAmp, cfg.minRangeM, this);
         connect(mStream, &SideStream::frameReady, this,
                 &MainWindow::onFrameReady);
         mStream->start();
@@ -165,6 +189,9 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
 }
 
 MainWindow::~MainWindow() {
+    if (mLink) {
+        mLink->stop();
+    }
     if (mFcProcess && mFcProcess->state() != QProcess::NotRunning) {
         mFcProcess->terminate();
         if (!mFcProcess->waitForFinished(1000)) {
@@ -175,6 +202,21 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::startRadar() {
+    if (mLink) {
+        // Over the link the board owns the motor CAN commands (CMD 0x40);
+        // starting the local FC client would fight with it over the radar.
+        if (!mLink->isConnected()) {
+            std::fprintf(stderr, "[power] link is down, power-on skipped\n");
+            return;
+        }
+        QByteArray args(2, '\0');
+        args[0] = char(quint8(mRpm & 0xFF));
+        args[1] = char(quint8((mRpm >> 8) & 0xFF));
+        mLink->sendCmd(LinkStream::kOpMotorEnable);
+        mLink->sendCmd(LinkStream::kOpSetRpm, args);
+        setPowerRunning(true);
+        return;
+    }
     if (mFcProcess->state() != QProcess::NotRunning) {
         return;
     }
@@ -186,6 +228,11 @@ void MainWindow::startRadar() {
 }
 
 void MainWindow::stopRadar() {
+    if (mLink) {
+        mLink->sendCmd(LinkStream::kOpStop);
+        setPowerRunning(false);
+        return;
+    }
     if (mFcProcess->state() == QProcess::NotRunning) {
         return;
     }
@@ -218,7 +265,11 @@ void MainWindow::applyFrame(const SideFrame &fr) {
     mHud.subtype = int(fr.subtype);
     mHud.entries = int(fr.entryCount);
     mHud.blips = int(fr.points.size());
-    mHud.packetLossPct = mStream ? mStream->packetLossPct() : 0.0;
+    mHud.sumOk = fr.sumOk;
+    mHud.rpm = fr.rpm;
+    mHud.source = mDemoMode ? QStringLiteral("演示") : sourceLabel(fr.source);
+    mHud.packetLossPct = mLink ? mLink->packetLossPct()
+                               : (mStream ? mStream->packetLossPct() : 0.0);
     mPpi->setFrame(fr);
 }
 
@@ -237,6 +288,7 @@ void MainWindow::refreshHud() {
     }
     mHud.live = mFrames > 0;
     mHud.demo = mDemoMode;
+    mHud.linkUp = mLink ? mLink->isConnected() : true;
     mHud.fps = std::round(fps * 10.0) / 10.0;
     mHud.frames = mFrames;
     mHud.rangeM = mPpi->rangeLimit();
@@ -245,7 +297,11 @@ void MainWindow::refreshHud() {
 }
 
 void MainWindow::onFrameReady() {
-    applyFrame(mStream->latest());
+    if (mLink) {
+        applyFrame(mLink->latest());
+    } else if (mStream) {
+        applyFrame(mStream->latest());
+    }
 }
 
 void MainWindow::onDemoTick() {
