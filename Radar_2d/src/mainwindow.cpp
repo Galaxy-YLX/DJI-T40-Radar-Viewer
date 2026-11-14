@@ -145,6 +145,9 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     vbox->setSpacing(0);
     auto *split = new QSplitter(Qt::Horizontal, central);
     split->setChildrenCollapsible(false);
+    // Dark handle: the default light one is glaring between two black views.
+    split->setStyleSheet(
+        "QSplitter::handle { background-color: #0b3d20; }");
     split->addWidget(mPpi);
     split->addWidget(mFlat);
     split->setStretchFactor(0, 8);

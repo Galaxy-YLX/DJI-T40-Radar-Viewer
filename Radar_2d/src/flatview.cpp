@@ -22,15 +22,15 @@ constexpr double kRight = 26.0;    // room for the rightmost "120" label
 constexpr double kTop = 46.0;
 constexpr double kBottom = 90.0;   // caption + colour bar + distance ticks
 
-// A light canvas is deliberate: the far end of the requested scale is black,
-// so black blips would be invisible on the PPI's black phosphor background.
-const QColor kBg(238, 242, 238);
-const QColor kGridMinor(207, 216, 207);
-const QColor kGridMajor(166, 181, 166);
-const QColor kGridZero(104, 124, 104);
-const QColor kFrame(118, 134, 118);
-const QColor kText(28, 44, 34);
-const QColor kTextDim(92, 108, 96);
+// Black phosphor canvas, matching the PPI. The far end of the requested
+// colour scale is black as well, so those points simply fade into the canvas.
+const QColor kBg(0, 0, 0);
+const QColor kGridMinor(0, 58, 30);
+const QColor kGridMajor(0, 100, 52);
+const QColor kGridZero(0, 160, 82);
+const QColor kFrame(0, 120, 62);
+const QColor kText(0, 255, 102);
+const QColor kTextDim(0, 175, 88);
 
 const int kAzLabels[] = {240, 270, 300, 330, 0, 30, 60, 90, 120};
 constexpr int kAzLabelCount = 9;
@@ -172,6 +172,9 @@ void FlatView::drawPoints(QPainter &p, const QRectF &plot) {
             : 1.0;
         // Snap to one of kBins discrete distance steps ("分度").
         const int bin = std::min(kBins - 1, int(t * kBins));
+        // Black far-range blips would vanish on the black canvas, so give
+        // only the dark end of the scale a thin rim.
+        p.setPen(t >= 0.7 ? QPen(kDarkOutline, 0.8) : QPen(Qt::NoPen));
         p.setBrush(rangeColor((bin + 0.5) / kBins));
         p.drawEllipse(QPointF(x, y), mPointRadius, mPointRadius);
         ++mShown;
@@ -227,11 +230,15 @@ void FlatView::drawLegend(QPainter &p, const QRectF &plot) const {
     const double barX = plot.left();
     const double barY = plot.bottom() + 34.0;
     for (int i = 0; i < kBins; ++i) {
-        p.fillRect(QRectF(barX + i * barW / kBins, barY,
-                          barW / kBins + 1.0, barH),
-                   rangeColor((i + 0.5) / kBins));
+        const QRectF step(barX + i * barW / kBins, barY,
+                          barW / kBins + 1.0, barH);
+        p.fillRect(step, rangeColor((i + 0.5) / kBins));
+        // Dark steps need an outline to read as part of the scale on black.
+        p.setPen(QPen(kFrame, 0.6));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(step);
     }
-    p.setPen(QPen(kFrame, 1.0));
+    p.setPen(QPen(kTextDim, 1.0));
     p.setBrush(Qt::NoBrush);
     p.drawRect(QRectF(barX, barY, barW, barH));
 
