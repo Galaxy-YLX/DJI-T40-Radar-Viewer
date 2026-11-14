@@ -94,7 +94,13 @@ void PpiWidget::paintEvent(QPaintEvent *) {
     for (double d = 5.0; d <= mRangeLimit + 1e-6; d += 5.0) {
         const double rp = d / mRangeLimit * radiusPx;
         p.setPen(QPen(kRing, 1, Qt::SolidLine));
-        p.drawEllipse(QPointF(cx, cy), rp, rp);
+        // Rings span only the forward 240° (azimuth 240° → 120° through 0°);
+        // the rear wedge is left blank to match its missing coverage.
+        const QRectF ringRect(cx - rp, cy - rp, 2.0 * rp, 2.0 * rp);
+        const int startAngle = int((90.0 - kEmptyAzEndDeg) * 16.0);
+        const int spanAngle =
+            int(-(360.0 - (kEmptyAzEndDeg - kEmptyAzStartDeg)) * 16.0);
+        p.drawArc(ringRect, startAngle, spanAngle);
         p.setPen(kScale);
         p.drawText(QPointF(cx + rp + 3.0, cy), QString::number(int(d)) + "m");
     }
@@ -103,6 +109,9 @@ void PpiWidget::paintEvent(QPaintEvent *) {
     // with the range labels drawn along the 090 radial.
     p.setPen(kPhosphorDim);
     for (int a = 0; a < 360; a += 90) {
+        if (a == 180) {
+            continue;   // rear label omitted (no coverage in that wedge)
+        }
         const double rad = a * kPi / 180.0;
         const double lx = cx + (radiusPx - 24.0) * std::sin(rad);
         const double ly = cy - (radiusPx - 24.0) * std::cos(rad);
@@ -110,14 +119,6 @@ void PpiWidget::paintEvent(QPaintEvent *) {
         p.drawText(QPointF(lx - 10.0, ly - 12.0),
                    QString::number(a).rightJustified(3, QLatin1Char('0')));
     }
-
-    // Forward marker (green triangle at the top).
-    const QPointF tip(cx, cy - radiusPx - 2.0);
-    const QPointF b1(cx - 6.0, cy - radiusPx - 14.0);
-    const QPointF b2(cx + 6.0, cy - radiusPx - 14.0);
-    p.setPen(Qt::NoPen);
-    p.setBrush(kPhosphor);
-    p.drawPolygon(QPolygonF() << tip << b1 << b2);
 
     // Returns: a soft phosphor halo plus a green core graded by SNR.
     // A left-right flip mirrors the point cloud about the forward/back axis
