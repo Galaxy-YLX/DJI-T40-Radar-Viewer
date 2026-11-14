@@ -15,6 +15,7 @@
 # Environment overrides:
 #   RADAR_IP (192.168.8.2)   CAN_IFACE (can0)
 #   RANGE (25)  POINT_SIZE (0.5)  AZIMUTH_OFFSET (0)  MIN_SNR (0)  MIN_RANGE (0)
+#   FLIP (1)  — 1 mirrors the point cloud left-right, 0 disables the mirror
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,6 +28,13 @@ POINT_SIZE="${POINT_SIZE:-0.5}"
 AZIMUTH_OFFSET="${AZIMUTH_OFFSET:-0}"
 MIN_SNR="${MIN_SNR:-0}"
 MIN_RANGE="${MIN_RANGE:-0}"
+FLIP="${FLIP:-1}"
+
+# Optional --no-flip only when FLIP=0 (the viewer flips by default).
+FLIP_ARGS=()
+if [ "$FLIP" = "0" ]; then
+    FLIP_ARGS=(--no-flip)
+fi
 
 # ── Environment auto-config ─────────────────────────────────────────────
 ensure_env() {
@@ -83,7 +91,7 @@ fi
 MODE="${1:-live}"
 case "$MODE" in
   demo)
-    exec "$BIN" --demo --range "$RANGE" --point-size 0.5
+    exec "$BIN" --demo --range "$RANGE" --point-size 0.5 "${FLIP_ARGS[@]}"
     ;;
   dump)
     ensure_env
@@ -108,7 +116,7 @@ case "$MODE" in
     echo "[run] launching 2D viewer (DJI 1E61 v2 stream, UDP 40204) ..."
     "$BIN" --host "$RADAR_IP" --range "$RANGE" --point-size "$POINT_SIZE" \
         --azimuth-offset "$AZIMUTH_OFFSET" --min-snr "$MIN_SNR" \
-        --min-range "$MIN_RANGE"
+        --min-range "$MIN_RANGE" "${FLIP_ARGS[@]}"
     ;;
   *)
     echo "usage: $0 [demo|live|dump]" >&2

@@ -5,9 +5,15 @@
 #include <QPaintEvent>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace {
 constexpr double kPi = 3.14159265358979323846;
+
+// 1E61 perception covers only azimuth ±120° about forward, so the rear
+// wedge (120°..240°) carries no points and its grid lines are left blank.
+constexpr double kEmptyAzStartDeg = 120.0;   // rear-right boundary
+constexpr double kEmptyAzEndDeg = 240.0;     // rear-left boundary
 
 // Classic monochrome radar: pure black canvas, green phosphor only.
 const QColor kGrid(0, 96, 48, 170);      // bearing lines
@@ -46,6 +52,11 @@ void PpiWidget::setPointRadius(double px) {
     update();
 }
 
+void PpiWidget::setFlipLeftRight(bool flip) {
+    mFlipLeftRight = flip;
+    update();
+}
+
 QColor PpiWidget::snrColor(float snr) {
     // Weak returns are dim phosphor, strong returns approach full green.
     const float t = std::clamp(snr / 255.0f, 0.0f, 1.0f);
@@ -62,9 +73,14 @@ void PpiWidget::paintEvent(QPaintEvent *) {
     const double cx = w / 2.0, cy = h / 2.0;
     const double radiusPx = std::min(w, h) * 0.5 - 34.0;  // leave room for labels
 
-    // Bearing lines (every 30 deg).
+    // Bearing lines (every 30 deg). The rear wedge (120°..240°) has no
+    // point-cloud coverage, so its bearing lines are suppressed; the 120°
+    // and 240° radials remain as the coverage boundary.
     p.setPen(QPen(kGrid, 1));
     for (int a = 0; a < 360; a += 30) {
+        if (a > kEmptyAzStartDeg && a < kEmptyAzEndDeg) {
+            continue;
+        }
         const double rad = a * kPi / 180.0;
         p.drawLine(QPointF(cx, cy),
                    QPointF(cx + radiusPx * std::sin(rad),
@@ -104,10 +120,13 @@ void PpiWidget::paintEvent(QPaintEvent *) {
     p.drawPolygon(QPolygonF() << tip << b1 << b2);
 
     // Returns: a soft phosphor halo plus a green core graded by SNR.
+    // A left-right flip mirrors the point cloud about the forward/back axis
+    // (forward stays up, right <-> left swap) by negating the screen-x term.
+    const double xSign = mFlipLeftRight ? -1.0 : 1.0;
     for (const SectorPoint &pt : mPoints) {
         const double rad = pt.azimuthDeg * kPi / 180.0;
         const double rp = pt.rangeM / mRangeLimit * radiusPx;
-        const double x = cx + rp * std::sin(rad);
+        const double x = cx + xSign * rp * std::sin(rad);
         const double y = cy - rp * std::cos(rad);
         p.setPen(Qt::NoPen);
         p.setBrush(QColor(0, 255, 102, 38));
@@ -201,7 +220,7 @@ void PpiWidget::drawHud(QPainter &p) {
     p.setFont(small);
     p.setPen(kPhosphorDim);
     p.drawText(QPointF(left, ruleY + 6.0 + fm.ascent() + 4.0 * rowH + 2.0),
-               "i / o 键  缩放      [ ]  点大小");
+               "i / o 键  缩放      [ ]  点大小      f 翻转");
     p.restore();
 }
 
@@ -215,6 +234,11 @@ void PpiWidget::keyPressEvent(QKeyEvent *ev) {
         setPointRadius(mPointRadius * 1.25);
     } else if (k == "[" || k == "-") {
         setPointRadius(mPointRadius / 1.25);
+    } else if (k == "f" || k == "F") {
+        mFlipLeftRight = !mFlipLeftRight;
+        update();
+        std::fprintf(stderr, "[view] left-right flip = %s\n",
+                     mFlipLeftRight ? "on" : "off");
     } else {
         QWidget::keyPressEvent(ev);
     }

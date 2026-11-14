@@ -28,6 +28,7 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
 
     mPpi = new PpiWidget(this);
     mPpi->setPointRadius(cfg.pointRadius);
+    mPpi->setFlipLeftRight(cfg.flipLeftRight);
     mDemoMode = cfg.demo;
     mHud.rangeM = cfg.rangeM;
     mHud.pointRadius = cfg.pointRadius;

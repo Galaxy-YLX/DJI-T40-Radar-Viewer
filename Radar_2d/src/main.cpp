@@ -24,6 +24,8 @@ static Config parseConfig(const QCoreApplication &app) {
         {"min-snr", "drop detections with SNR below this", "n", "0"},
         {"min-range", "drop detections closer than this (m)", "m", "0"},
         {"point-size", "blip radius in pixels", "px", "0.5"},
+        {"flip", "mirror the point cloud left-right (on by default)"},
+        {"no-flip", "disable the left-right mirror"},
         {"demo", "render synthetic points (no radar hardware)"},
         {"dump", "decode one frame as text and exit"},
     });
@@ -38,6 +40,7 @@ static Config parseConfig(const QCoreApplication &app) {
     cfg.pointRadius = p.value("point-size").toDouble();
     cfg.demo = p.isSet("demo");
     cfg.dump = p.isSet("dump");
+    cfg.flipLeftRight = !p.isSet("no-flip");
     return cfg;
 }
 

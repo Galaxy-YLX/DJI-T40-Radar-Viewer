@@ -47,8 +47,10 @@ public:
 
     double rangeLimit() const { return mRangeLimit; }
     double pointRadius() const { return mPointRadius; }
+    bool flipLeftRight() const { return mFlipLeftRight; }
     void setRangeLimit(double m);
     void setPointRadius(double px);
+    void setFlipLeftRight(bool flip);
 
 signals:
     void rangeChanged(double m);
@@ -65,4 +67,5 @@ private:
     HudState mHud;
     double mRangeLimit = 25.0;
     double mPointRadius = 0.5;
+    bool mFlipLeftRight = false;
 };
