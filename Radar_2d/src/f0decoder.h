@@ -21,11 +21,7 @@ struct F0Frame {
 
 namespace F0 {
 
-// The 0x00F0 stream has a 121 degree no-data wedge centred on forward:
-// Python's BLIND = (5.204, 7.314) rad, wrapped into [0, 360).
 inline constexpr double kPi = 3.14159265358979323846;
-inline constexpr double kBlindStartDeg = 5.204 * 180.0 / kPi;         // 298.16
-inline constexpr double kBlindEndDeg = 7.314 * 180.0 / kPi - 360.0;   //  59.13
 
 // Decode one UDP payload (DUML magic need not be at offset 0).
 F0Frame decode(const uint8_t *data, int len);
@@ -34,7 +30,7 @@ F0Frame decode(const uint8_t *data, int len);
 double rpmFromC5(const F0Frame &f);
 
 // Project the spherical points into the PPI's polar coordinates.
-SideFrame toSideFrame(const F0Frame &f, PointSource src, float offsetDeg,
+SideFrame toSideFrame(const F0Frame &f, float offsetDeg,
                       int minAmp, float minRangeM);
 
 }  // namespace F0

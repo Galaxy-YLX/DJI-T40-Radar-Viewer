@@ -17,14 +17,6 @@
 #include "sidestream.h"
 
 namespace {
-QString sourceLabel(PointSource s) {
-    switch (s) {
-    case PointSource::F0Udp:  return QStringLiteral("00F0/UDP");
-    case PointSource::E61:    return QStringLiteral("1E61/UDP");
-    }
-    return QStringLiteral("?");
-}
-
 constexpr double kPi = 3.14159265358979323846;
 constexpr int kRangeMinM = 5;
 constexpr int kRangeMaxM = 50;
@@ -56,7 +48,7 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mPpi->setFlipLeftRight(cfg.flipLeftRight);
     mDemoMode = cfg.demo;
     mHud.rangeM = cfg.rangeM;
-    mHud.source = cfg.demo ? QStringLiteral("演示") : QStringLiteral("UDP/自动");
+    mHud.source = cfg.demo ? QStringLiteral("演示") : QStringLiteral("00F0/UDP");
     mHud.pointRadius = cfg.pointRadius;
     mPpi->setHud(mHud);
 
@@ -166,7 +158,7 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
         mDemoTimer->start(80);
     } else {
         mStream = new SideStream(cfg.host, cfg.port, float(cfg.offsetDeg),
-                                 cfg.minSnr, cfg.minAmp, cfg.minRangeM, this);
+                                 cfg.minAmp, cfg.minRangeM, this);
         connect(mStream, &SideStream::frameReady, this,
                 &MainWindow::onFrameReady);
         mStream->start();
@@ -224,12 +216,12 @@ void MainWindow::applyFrame(const SideFrame &fr) {
     mFrames++;
     mFrameTimes.push_back(mClock.elapsed());
     mHud.token = int(fr.frameToken);
-    mHud.subtype = int(fr.subtype);
     mHud.entries = int(fr.entryCount);
     mHud.blips = int(fr.points.size());
     mHud.sumOk = fr.sumOk;
     mHud.rpm = fr.rpm;
-    mHud.source = mDemoMode ? QStringLiteral("演示") : sourceLabel(fr.source);
+    mHud.source = mDemoMode ? QStringLiteral("演示")
+                            : QStringLiteral("00F0/UDP");
     mHud.packetLossPct = mStream ? mStream->packetLossPct() : 0.0;
     mPpi->setFrame(fr);
 }
@@ -266,20 +258,19 @@ void MainWindow::onDemoTick() {
     ++mDemoN;
     QVector<SectorPoint> pts;
     const double phase = mDemoN * 0.02;
-    for (int i = 0; i < 360; ++i) {
+    for (int i = -120; i <= 120; ++i) {
         const double az = i * 1.0;
         const double r = 9.0 + 2.5 * std::sin(3.0 * az * kPi / 180.0 + phase);
         const double snr = 60.0 + 90.0 * std::fabs(std::sin(2.0 * az * kPi / 180.0));
         SectorPoint p;
-        p.azimuthDeg = float(std::fmod(az + mOffsetDeg, 360.0));
+        p.azimuthDeg = float(std::fmod(az + mOffsetDeg + 360.0, 360.0));
         p.rangeM = float(r);
         p.snr = float(snr);
         pts.push_back(p);
     }
     SideFrame fr;
     fr.valid = true;
-    fr.subtype = 2;  // pcla
-    fr.entryCount = 360;
+    fr.entryCount = uint16_t(pts.size());
     fr.frameToken = uint32_t(mDemoN);
     fr.points = pts;
     applyFrame(fr);

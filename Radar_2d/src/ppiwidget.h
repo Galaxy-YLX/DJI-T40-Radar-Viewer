@@ -19,19 +19,18 @@ struct HudState {
     int frames = 0;
     int blips = 0;
     int token = 0;
-    int subtype = 0;        // 1E61 subtype: 0=ground 1=wire 2=pcla
     int entries = 0;        // raw records in the latest frame
     double rangeM = 0.0;
     double pointRadius = 0.0;
     double packetLossPct = 0.0;   // packet loss, %% since stream start
-    QString source;         // point-cloud source (1E61 / 00F0 ...)
+    QString source;         // point-cloud source (00F0/UDP / 演示)
     bool sumOk = true;      // 0x00F0 header checksums passed
     double rpm = 0.0;       // motor rpm inferred from c5 (0 = unknown)
 
     bool operator==(const HudState &o) const {
         return live == o.live && demo == o.demo && fps == o.fps &&
                frames == o.frames && blips == o.blips && token == o.token &&
-               subtype == o.subtype && entries == o.entries &&
+               entries == o.entries &&
                rangeM == o.rangeM && pointRadius == o.pointRadius &&
                packetLossPct == o.packetLossPct && source == o.source &&
                sumOk == o.sumOk && rpm == o.rpm;
@@ -76,9 +75,7 @@ private:
     double mRangeLimit = 25.0;
     double mPointRadius = 0.5;
     bool mFlipLeftRight = false;
-    // No-data wedge described by the current point-cloud source. 1E61 has no
-    // rear coverage (120..240); 0x00F0 has no forward coverage (~298..59).
-    double mBlindStartDeg = 120.0;
-    double mBlindEndDeg = 240.0;
-    bool mBlindLocked = false;   // fixed once a 0x00F0 frame arrives
+    // Rear no-data wedge; the PPI shows +/-120 deg around forward.
+    double mBlindStartDeg = kBlindStartDeg;
+    double mBlindEndDeg = kBlindEndDeg;
 };

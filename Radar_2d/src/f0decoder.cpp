@@ -132,20 +132,17 @@ double rpmFromC5(const F0Frame &f) {
     return 60e6 / (num / den * 6283.19);
 }
 
-SideFrame toSideFrame(const F0Frame &f, PointSource src, float offsetDeg,
+SideFrame toSideFrame(const F0Frame &f, float offsetDeg,
                       int minAmp, float minRangeM) {
     SideFrame fr;
     if (!f.valid) {
         return fr;
     }
     fr.valid = true;
-    fr.source = src;
     fr.entryCount = uint16_t(f.n);
     fr.frameToken = uint32_t(f.seq);
     fr.sumOk = f.sumOk;
     fr.rpm = rpmFromC5(f);
-    fr.blindStartDeg = kBlindStartDeg;
-    fr.blindEndDeg = kBlindEndDeg;
     fr.points.reserve(f.n);
 
     for (int k = 0; k < f.n; ++k) {
@@ -154,15 +151,22 @@ SideFrame toSideFrame(const F0Frame &f, PointSource src, float offsetDeg,
             continue;
         }
         // points_xy(): the horizontal range is r*cos(el), azimuth stays
-        // clockwise with 0 degrees at the top, just like the 1E61 PPI.
+        // clockwise with 0 degrees at the top, matching the PPI convention.
         const float range = float(f.r[k] * std::cos(f.el[k]));
         if (!std::isfinite(range) || range < minRangeM) {
             continue;
         }
+        // 0x00F0's c0 is the rotating head angle: its zero sits at the centre
+        // of the no-data sector, 180 deg off physical forward (cross-check
+        // against 1E61 xyz: best offset = az + pi). Rotate it so the returns
+        // land in the PPI's +/-120 deg forward view.
         float azDeg = float(std::fmod(double(f.az[k]) * kRadToDeg
-                                      + double(offsetDeg), 360.0));
+                                      + 180.0 + double(offsetDeg), 360.0));
         if (azDeg < 0.0f) {
             azDeg += 360.0f;
+        }
+        if (azDeg > kBlindStartDeg && azDeg < kBlindEndDeg) {
+            continue;   // rear no-data sector, outside the display range
         }
         SectorPoint p;
         p.azimuthDeg = azDeg;

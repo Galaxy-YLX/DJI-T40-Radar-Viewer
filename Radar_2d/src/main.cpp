@@ -27,7 +27,6 @@ static Config parseConfig(const QCoreApplication &app) {
         {"range", "scope range limit in metres", "m", "25"},
         {"azimuth-offset", "azimuth rotation in degrees (forward -> top)", "deg",
          "0"},
-        {"min-snr", "1E61: drop detections with SNR below this", "n", "0"},
         {"min-amp", "0x00F0: drop points with c3 below this", "n", "80"},
         {"min-range", "drop detections closer than this (m)", "m", "0"},
         {"point-size", "blip radius in pixels", "px", "0.5"},
@@ -47,7 +46,6 @@ static Config parseConfig(const QCoreApplication &app) {
     cfg.port = p.value("port").toUShort();
     cfg.rangeM = p.value("range").toDouble();
     cfg.offsetDeg = p.value("azimuth-offset").toDouble();
-    cfg.minSnr = p.value("min-snr").toInt();
     cfg.minAmp = p.value("min-amp").toInt();
     cfg.minRangeM = p.value("min-range").toFloat();
     cfg.pointRadius = p.value("point-size").toDouble();
@@ -61,9 +59,7 @@ static Config parseConfig(const QCoreApplication &app) {
 }
 
 static void printFrame(const SideFrame &fr) {
-    const char *src = fr.source == PointSource::E61 ? "1E61/UDP"
-                                                    : "00F0/UDP";
-    std::printf("=== 2D radar one frame (%s) ===\n", src);
+    std::printf("=== 2D radar one frame (00F0/UDP) ===\n");
     std::printf("seq=%u entries=%u points=%d sum_ok=%d rpm=%.1f\n",
                 fr.frameToken, fr.entryCount, int(fr.points.size()),
                 int(fr.sumOk), fr.rpm);
@@ -100,8 +96,8 @@ static int runDumpWith(Stream &stream) {
 }
 
 static int runDump(const Config &cfg) {
-    SideStream stream(cfg.host, cfg.port, float(cfg.offsetDeg), cfg.minSnr,
-                      cfg.minAmp, cfg.minRangeM);
+    SideStream stream(cfg.host, cfg.port, float(cfg.offsetDeg), cfg.minAmp,
+                      cfg.minRangeM);
     return runDumpWith(stream);
 }
 

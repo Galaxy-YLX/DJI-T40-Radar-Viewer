@@ -16,7 +16,7 @@
 #
 # Environment overrides:
 #   RADAR_IP (192.168.8.2)  CAN_IFACE (can0)  MIN_AMP (80)
-#   RANGE (25)  POINT_SIZE (0.5)  AZIMUTH_OFFSET (0)  MIN_SNR (0)  MIN_RANGE (0)
+#   RANGE (25)  POINT_SIZE (0.5)  AZIMUTH_OFFSET (0)  MIN_RANGE (0)
 #   FLIP (1)  — 1 mirrors the point cloud left-right, 0 disables the mirror
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -29,7 +29,6 @@ MIN_AMP="${MIN_AMP:-80}"
 RANGE="${RANGE:-25}"
 POINT_SIZE="${POINT_SIZE:-0.5}"
 AZIMUTH_OFFSET="${AZIMUTH_OFFSET:-0}"
-MIN_SNR="${MIN_SNR:-0}"
 MIN_RANGE="${MIN_RANGE:-0}"
 FLIP="${FLIP:-1}"
 
@@ -92,7 +91,7 @@ if [ ! -x "$BIN" ]; then
 fi
 
 COMMON_ARGS=(--range "$RANGE" --point-size "$POINT_SIZE"
-             --azimuth-offset "$AZIMUTH_OFFSET" --min-snr "$MIN_SNR"
+             --azimuth-offset "$AZIMUTH_OFFSET"
              --min-range "$MIN_RANGE" --min-amp "$MIN_AMP"
              "${FLIP_ARGS[@]}")
 UDP_ARGS=(--host "$RADAR_IP"

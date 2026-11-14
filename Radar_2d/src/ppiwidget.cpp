@@ -27,22 +27,20 @@ PpiWidget::PpiWidget(QWidget *parent) : QWidget(parent) {
 }
 
 void PpiWidget::setFrame(const SideFrame &fr) {
-    mPoints = fr.points;
-    // The 0x00F0 point cloud describes the radar's real coverage wedge.
-    // Keep it fixed afterwards: 1E61 frames carry the opposite wedge, and
-    // letting them rewrite it flips the whole grid up/down on each frame.
-    if (!mBlindLocked || fr.source == PointSource::F0Udp) {
-        mBlindStartDeg = fr.blindStartDeg;
-        mBlindEndDeg = fr.blindEndDeg;
-        if (fr.source == PointSource::F0Udp) {
-            mBlindLocked = true;
+    mBlindStartDeg = fr.blindStartDeg;
+    mBlindEndDeg = fr.blindEndDeg;
+    // Clip blips to the +/-120 deg forward view (the demo frame is 360 deg).
+    mPoints.clear();
+    mPoints.reserve(fr.points.size());
+    for (const SectorPoint &pt : fr.points) {
+        if (!inBlind(pt.azimuthDeg)) {
+            mPoints.push_back(pt);
         }
     }
     if (std::getenv("RADAR2D_PPI_DEBUG")) {
         std::fprintf(stderr,
-                     "[ppi] src=%d pts=%d blind=%.1f..%.1f locked=%d\n",
-                     int(fr.source), int(fr.points.size()), mBlindStartDeg,
-                     mBlindEndDeg, int(mBlindLocked));
+                     "[ppi] pts=%d blind=%.1f..%.1f\n",
+                     int(mPoints.size()), mBlindStartDeg, mBlindEndDeg);
     }
     update();
 }
@@ -51,7 +49,7 @@ bool PpiWidget::inBlind(double azDeg) const {
     if (mBlindStartDeg < mBlindEndDeg) {
         return azDeg > mBlindStartDeg && azDeg < mBlindEndDeg;
     }
-    // The 0x00F0 no-data wedge straddles 0 degrees (forward).
+    // A wrapped wedge (start > end) straddles 0 degrees.
     return azDeg > mBlindStartDeg || azDeg < mBlindEndDeg;
 }
 
@@ -181,9 +179,17 @@ void PpiWidget::paintEvent(QPaintEvent *) {
     // A left-right flip mirrors the point cloud about the forward/back axis
     // (forward stays up, right <-> left swap) by negating the screen-x term.
     const double xSign = mFlipLeftRight ? -1.0 : 1.0;
+    // Keep each blip (halo included) inside the outermost range ring. Points
+    // farther than the current range limit used to be drawn outside the PPI.
+    const double maxRadiusPx = radiusPx - mPointRadius * 2.0;
+    int clipped = 0;
     for (const SectorPoint &pt : mPoints) {
         const double rad = pt.azimuthDeg * kPi / 180.0;
         const double rp = pt.rangeM / mRangeLimit * radiusPx;
+        if (!std::isfinite(rp) || rp < 0.0 || rp > maxRadiusPx) {
+            ++clipped;
+            continue;
+        }
         const double x = cx + xSign * rp * std::sin(rad);
         const double y = cy - rp * std::cos(rad);
         p.setPen(Qt::NoPen);
@@ -192,6 +198,10 @@ void PpiWidget::paintEvent(QPaintEvent *) {
                       mPointRadius * 2.0);
         p.setBrush(snrColor(pt.snr));
         p.drawEllipse(QPointF(x, y), mPointRadius, mPointRadius);
+    }
+    if (std::getenv("RADAR2D_PPI_DEBUG")) {
+        std::fprintf(stderr, "[ppi] range clipped=%d shown=%d limit=%.1fm\n",
+                     clipped, int(mPoints.size()) - clipped, mRangeLimit);
     }
 
     // Origin cross.
@@ -246,7 +256,7 @@ void PpiWidget::drawHud(QPainter &p) {
 
     p.setFont(mono);
     const qreal labelW =
-        fm.horizontalAdvance(QString::fromUtf8("子类型    "));
+        fm.horizontalAdvance(QString::fromUtf8("丢包率    "));
     const qreal col2 = left + 136.0;
     auto cell = [&](qreal x, int row, const char *label,
                     const QString &value) {
