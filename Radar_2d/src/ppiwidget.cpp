@@ -242,13 +242,12 @@ void PpiWidget::drawHud(QPainter &p) {
     const qreal top = 14.0;
 
     // Status is the first line of the card, left-aligned below the range bar.
+    // Frame rate has its own row.
     const QString status =
-        (h.live && !h.sumOk)
-            ? QString::fromUtf8("当前状态：校验! %1 Hz").arg(h.fps, 0, 'f', 1)
+        (h.live && !h.sumOk) ? QString::fromUtf8("当前状态：校验!")
         : !h.live ? QString::fromUtf8("当前状态：等待")
-        : (streaming
-               ? QString::fromUtf8("当前状态：实时 %1 Hz").arg(h.fps, 0, 'f', 1)
-               : QString::fromUtf8("当前状态：停滞 0.0 Hz"));
+        : (streaming ? QString::fromUtf8("当前状态：实时")
+                     : QString::fromUtf8("当前状态：停滞"));
 
     const qreal statusY = top + fm.ascent();
     p.setPen(kPhosphor);
@@ -273,7 +272,7 @@ void PpiWidget::drawHud(QPainter &p) {
     const QString blips = QString::number(h.blips)
         + ((h.live && h.blips == 0) ? "!" : "");
 
-    cell(0, "帧号", QString::number(h.frames));
+    cell(0, "帧率", QString::number(h.fps, 'f', 1) + " Hz");
     cell(1, "帧序号", QString::number(h.token));
     cell(2, "源", h.source);
     cell(3, "回波", blips);
@@ -290,8 +289,10 @@ void PpiWidget::drawHud(QPainter &p) {
 
     p.setFont(small);
     p.setPen(kPhosphorDim);
-    p.drawText(QPointF(left, bodyTop + 6.0 + fm.ascent() + kRowCount * rowH + 2.0),
-               "i / o 键  量程±5m    [ ]  点大小    f 翻转");
+    const qreal hintY = bodyTop + 6.0 + fm.ascent() + kRowCount * rowH + 2.0;
+    const qreal hintRowH = p.fontMetrics().height() + 2.0;
+    p.drawText(QPointF(left, hintY), "i / o 键  量程±5m");
+    p.drawText(QPointF(left, hintY + hintRowH), "[ ]  点大小");
     p.restore();
 }
 
@@ -305,11 +306,6 @@ void PpiWidget::keyPressEvent(QKeyEvent *ev) {
         setPointRadius(mPointRadius * 1.25);
     } else if (k == "[" || k == "-") {
         setPointRadius(mPointRadius / 1.25);
-    } else if (k == "f" || k == "F") {
-        mFlipLeftRight = !mFlipLeftRight;
-        update();
-        std::fprintf(stderr, "[view] left-right flip = %s\n",
-                     mFlipLeftRight ? "on" : "off");
     } else {
         QWidget::keyPressEvent(ev);
     }
