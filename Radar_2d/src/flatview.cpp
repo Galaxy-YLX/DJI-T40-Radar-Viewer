@@ -227,15 +227,13 @@ void FlatView::drawLegend(QPainter &p, const QRectF &plot) const {
     const double barX = plot.left();
     const double barY = plot.bottom() + 34.0;
     for (int i = 0; i < kBins; ++i) {
-        const QRectF step(barX + i * barW / kBins, barY,
-                          barW / kBins + 1.0, barH);
-        p.fillRect(step, rangeColor((i + 0.5) / kBins));
-        // Dark steps need an outline to read as part of the scale on black.
-        p.setPen(QPen(kFrame, 0.6));
-        p.setBrush(Qt::NoBrush);
-        p.drawRect(step);
+        p.fillRect(QRectF(barX + i * barW / kBins, barY,
+                          barW / kBins + 1.0, barH),
+                   rangeColor((i + 0.5) / kBins));
     }
-    p.setPen(QPen(kTextDim, 1.0));
+    // Let the dark end of the bar fade into the canvas; only a dim outer
+    // frame marks where the scale starts and ends.
+    p.setPen(QPen(kFrame, 1.0));
     p.setBrush(Qt::NoBrush);
     p.drawRect(QRectF(barX, barY, barW, barH));
 
