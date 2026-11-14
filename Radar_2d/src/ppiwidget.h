@@ -48,6 +48,7 @@ public:
 
     void setFrame(const SideFrame &fr);
     void setHud(const HudState &hud);
+    void setHudAnchor(QWidget *anchor);
 
     double rangeLimit() const { return mRangeLimit; }
     double pointRadius() const { return mPointRadius; }
@@ -72,6 +73,7 @@ private:
 
     QVector<SectorPoint> mPoints;
     HudState mHud;
+    QWidget *mHudAnchor = nullptr;  // info card left edge follows this widget
     double mRangeLimit = 25.0;
     double mPointRadius = 0.5;
     bool mFlipLeftRight = false;

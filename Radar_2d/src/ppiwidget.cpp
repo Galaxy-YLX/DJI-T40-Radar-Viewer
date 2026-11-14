@@ -72,6 +72,11 @@ void PpiWidget::setHud(const HudState &hud) {
     update();
 }
 
+void PpiWidget::setHudAnchor(QWidget *anchor) {
+    mHudAnchor = anchor;
+    update();
+}
+
 void PpiWidget::setRangeLimit(double m) {
     mRangeLimit = std::clamp(m, 5.0, 50.0);
     emit rangeChanged(mRangeLimit);
@@ -228,63 +233,64 @@ void PpiWidget::drawHud(QPainter &p) {
     p.setFont(mono);
     const auto fm = p.fontMetrics();
 
-    const qreal left = 14.0;
-    const qreal right = 292.0;
+    // Keep the card's left edge aligned with the range label in the toolbar.
+    const qreal left = mHudAnchor
+        ? qreal(mHudAnchor->mapTo(this, QPoint(0, 0)).x())
+        : 14.0;
     const qreal rowH = fm.height() + 3.0;
     // Status card sits in the top-left corner, just below the range toolbar.
     const qreal top = 14.0;
 
-    const QString badge =
+    // Status is the first line of the card, left-aligned below the range bar.
+    const QString status =
         (h.live && !h.sumOk)
-            ? QString("[ 校验! ] %1 Hz").arg(h.fps, 0, 'f', 1)
-        : !h.live ? QString("[ 等待 ]  --.- Hz")
+            ? QString::fromUtf8("当前状态：校验! %1 Hz").arg(h.fps, 0, 'f', 1)
+        : !h.live ? QString::fromUtf8("当前状态：等待")
         : (streaming
-               ? QString("[ 实时 ]  %1 Hz").arg(h.fps, 0, 'f', 1)
-               : QString("[ 停滞 ]  0.0 Hz"));
+               ? QString::fromUtf8("当前状态：实时 %1 Hz").arg(h.fps, 0, 'f', 1)
+               : QString::fromUtf8("当前状态：停滞 0.0 Hz"));
 
-    const qreal badgeY = top + fm.ascent();
+    const qreal statusY = top + fm.ascent();
     p.setPen(kPhosphor);
-    p.drawText(QPointF(right - fm.horizontalAdvance(badge), badgeY), badge);
+    p.drawText(QPointF(left, statusY), status);
 
-    const qreal ruleY = badgeY + fm.descent() + 4.0;
-    p.setPen(QPen(kPhosphorDim, 1.0));
-    p.drawLine(QPointF(left, ruleY), QPointF(right, ruleY));
+    // Info rows start just below the status line; no divider line in between.
+    const qreal bodyTop = statusY + fm.descent() + 4.0;
 
     p.setFont(mono);
     const qreal labelW =
         fm.horizontalAdvance(QString::fromUtf8("丢包率    "));
-    const qreal col2 = left + 136.0;
-    auto cell = [&](qreal x, int row, const char *label,
-                    const QString &value) {
-        const qreal y = ruleY + 6.0 + fm.ascent() + row * rowH;
+    constexpr int kRowCount = 8;
+    auto cell = [&](int row, const char *label, const QString &value) {
+        const qreal y = bodyTop + 6.0 + fm.ascent() + row * rowH;
         p.setPen(kScale);
-        p.drawText(QPointF(x, y), QString::fromUtf8(label));
+        p.drawText(QPointF(left, y), QString::fromUtf8(label));
         p.setPen(kPhosphor);
-        p.drawText(QPointF(x + labelW, y), value);
+        p.drawText(QPointF(left + labelW, y), value);
     };
 
     // Single-colour display: abnormal values are flagged with '!'.
     const QString blips = QString::number(h.blips)
         + ((h.live && h.blips == 0) ? "!" : "");
 
-    cell(left, 0, "帧号", QString::number(h.frames));
-    cell(col2, 0, "帧序号", QString::number(h.token));
-    cell(left, 1, "源", h.source);
-    cell(col2, 1, "回波", blips);
-    cell(left, 2, "量程", QString::number(h.rangeM, 'f', 1) + "m");
-    cell(col2, 2, "点径", QString::number(h.pointRadius, 'f', 1));
+    cell(0, "帧号", QString::number(h.frames));
+    cell(1, "帧序号", QString::number(h.token));
+    cell(2, "源", h.source);
+    cell(3, "回波", blips);
+    cell(4, "量程", QString::number(h.rangeM, 'f', 1) + "m");
+    cell(5, "点径", QString::number(h.pointRadius, 'f', 1));
 
     // Packet loss: flagged with '!' once it climbs above a healthy threshold.
     const QString loss = QString::number(h.packetLossPct, 'f', 1) + "%"
         + (h.packetLossPct > 2.0 ? "!" : "");
-    cell(left, 3, "丢包率", loss);
-    cell(col2, 3, "转速", h.rpm > 0.0
+    cell(6, "丢包率", loss);
+    cell(7, "转速", h.rpm > 0.0
          ? QString::number(int(h.rpm + 0.5)) + "rpm"
          : QString::fromUtf8("—"));
 
     p.setFont(small);
     p.setPen(kPhosphorDim);
-    p.drawText(QPointF(left, ruleY + 6.0 + fm.ascent() + 4.0 * rowH + 2.0),
+    p.drawText(QPointF(left, bodyTop + 6.0 + fm.ascent() + kRowCount * rowH + 2.0),
                "i / o 键  量程±5m    [ ]  点大小    f 翻转");
     p.restore();
 }

@@ -24,6 +24,8 @@ constexpr int kRangeStepM = 5;
 constexpr int kFpsWindowMs = 2000;  // sliding window for the instant frame rate
 constexpr int kFpsStaleMs = 500;    // no frame this long -> 0 Hz
 constexpr int kHudRefreshMs = 200;  // status text refresh, decoupled from frames
+constexpr int kPowerButtonWidth = 120;
+constexpr int kPowerButtonHeight = 52;
 
 constexpr const char *kToolBarStyle =
     "QToolBar { background: #000000; border: none;"
@@ -35,7 +37,8 @@ constexpr const char *kToolBarStyle =
     "QToolBar QPushButton:hover:enabled { border-color: #00ff66; }"
     "QToolBar QPushButton:pressed { background-color: #0b3d20; }"
     "QToolBar QPushButton:disabled { color: #0b5c2c;"
-    " border-color: #062d16; }";
+    " border-color: #062d16; }"
+    "QPushButton#powerButton { font-size: 20px; }";
 }
 
 MainWindow::MainWindow(const Config &cfg, QWidget *parent)
@@ -75,13 +78,15 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     // Power row sits above the range row.
     auto *powerBar = makeBar("电源");
     mPowerOn = new QPushButton("开机", powerBar);
-    mPowerOn->setFixedWidth(60);
+    mPowerOn->setObjectName("powerButton");
+    mPowerOn->setFixedSize(kPowerButtonWidth, kPowerButtonHeight);
     mPowerOn->setFocusPolicy(Qt::NoFocus);
     mPowerOn->setToolTip("启动 FC 保活与 CAN 电机，使雷达进入工作状态");
     powerBar->addWidget(mPowerOn);
 
     mPowerOff = new QPushButton("关机", powerBar);
-    mPowerOff->setFixedWidth(60);
+    mPowerOff->setObjectName("powerButton");
+    mPowerOff->setFixedSize(kPowerButtonWidth, kPowerButtonHeight);
     mPowerOff->setFocusPolicy(Qt::NoFocus);
     mPowerOff->setToolTip("停止 FC 保活并发送停电机命令");
     powerBar->addWidget(mPowerOff);
@@ -89,7 +94,9 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
 
     auto *topBar = makeBar("量程");
 
-    topBar->addWidget(new QLabel("量程", topBar));
+    auto *rangeLabel = new QLabel("量程", topBar);
+    topBar->addWidget(rangeLabel);
+    mPpi->setHudAnchor(rangeLabel);
     mRangeValue = new QLabel(topBar);
     mRangeValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     mRangeValue->setMinimumWidth(40);
