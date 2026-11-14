@@ -24,6 +24,9 @@ static Config parseConfig(const QCoreApplication &app) {
         {"min-snr", "drop detections with SNR below this", "n", "0"},
         {"min-range", "drop detections closer than this (m)", "m", "0"},
         {"point-size", "blip radius in pixels", "px", "0.5"},
+        {"can-iface", "SocketCAN interface used by the FC bridge", "iface",
+         "can0"},
+        {"fc-client", "path to radar_min_client.py (empty = auto)", "path", ""},
         {"flip", "mirror the point cloud left-right (on by default)"},
         {"no-flip", "disable the left-right mirror"},
         {"demo", "render synthetic points (no radar hardware)"},
@@ -38,6 +41,8 @@ static Config parseConfig(const QCoreApplication &app) {
     cfg.minSnr = p.value("min-snr").toInt();
     cfg.minRangeM = p.value("min-range").toFloat();
     cfg.pointRadius = p.value("point-size").toDouble();
+    cfg.canIface = p.value("can-iface");
+    cfg.fcClient = p.value("fc-client");
     cfg.demo = p.isSet("demo");
     cfg.dump = p.isSet("dump");
     cfg.flipLeftRight = !p.isSet("no-flip");

@@ -11,12 +11,14 @@
 class SideStream;
 class QTimer;
 class QLabel;
+class QProcess;
 class QPushButton;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(const Config &cfg, QWidget *parent = nullptr);
+    ~MainWindow() override;
 
 private slots:
     void onFrameReady();
@@ -26,14 +28,23 @@ private slots:
 private:
     void applyFrame(const SideFrame &fr);
     void syncRangeDisplay(double m);
+    void startRadar();
+    void stopRadar();
+    void setPowerRunning(bool running);
 
     PpiWidget *mPpi;
     SideStream *mStream = nullptr;
     QTimer *mDemoTimer = nullptr;
     QTimer *mHudTimer = nullptr;
+    QProcess *mFcProcess = nullptr;
     QLabel *mRangeValue = nullptr;
     QPushButton *mRangePlus = nullptr;
     QPushButton *mRangeMinus = nullptr;
+    QPushButton *mPowerOn = nullptr;
+    QPushButton *mPowerOff = nullptr;
+    QString mRadarIp;
+    QString mCanIface;
+    QString mFcClientPath;
     bool mDemoMode = false;
     QElapsedTimer mClock;
     std::deque<qint64> mFrameTimes;

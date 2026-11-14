@@ -106,15 +106,12 @@ case "$MODE" in
     ;;
   live)
     ensure_env
-    echo "[run] starting FC client (can-bridge $CAN_IFACE, no v2 listen) ..."
-    python3 "$ROOT/radar_client/radar_min_client.py" \
-        --can-bridge "$CAN_IFACE" --radar-ip "$RADAR_IP" --no-v2-listen \
-        >/tmp/radar2d_fc.log 2>&1 &
-    FC_PID=$!
-    trap 'kill "$FC_PID" 2>/dev/null || true' EXIT
-
-    echo "[run] launching 2D viewer (DJI 1E61 v2 stream, UDP 40204) ..."
-    "$BIN" --host "$RADAR_IP" --range "$RANGE" --point-size "$POINT_SIZE" \
+    # The viewer's 开机 / 关机 buttons own the FC client; starting it here
+    # as well would fight over UDP 50007.
+    echo "[run] launching 2D viewer (press 开机 to start the radar) ..."
+    "$BIN" --host "$RADAR_IP" --can-iface "$CAN_IFACE" \
+        --fc-client "$ROOT/radar_client/radar_min_client.py" \
+        --range "$RANGE" --point-size "$POINT_SIZE" \
         --azimuth-offset "$AZIMUTH_OFFSET" --min-snr "$MIN_SNR" \
         --min-range "$MIN_RANGE" "${FLIP_ARGS[@]}"
     ;;

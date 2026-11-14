@@ -1,13 +1,17 @@
 #include "mainwindow.h"
 
+#include <QCoreApplication>
+#include <QDir>
 #include <QLabel>
 #include <QPalette>
+#include <QProcess>
 #include <QPushButton>
 #include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 #include "ppiwidget.h"
 #include "sidestream.h"
@@ -20,6 +24,18 @@ constexpr int kRangeStepM = 5;
 constexpr int kFpsWindowMs = 2000;  // sliding window for the instant frame rate
 constexpr int kFpsStaleMs = 500;    // no frame this long -> 0 Hz
 constexpr int kHudRefreshMs = 200;  // status text refresh, decoupled from frames
+
+constexpr const char *kToolBarStyle =
+    "QToolBar { background: #000000; border: none;"
+    " font-family: 'Noto Sans CJK SC', monospace; }"
+    "QToolBar QLabel { color: #00ff66; }"
+    "QToolBar QPushButton { background-color: #000000; color: #00ff66;"
+    " border: 1px solid #0b5c2c; min-width: 24px; min-height: 22px;"
+    " margin-left: 2px; font-size: 14px; font-weight: bold; }"
+    "QToolBar QPushButton:hover:enabled { border-color: #00ff66; }"
+    "QToolBar QPushButton:pressed { background-color: #0b3d20; }"
+    "QToolBar QPushButton:disabled { color: #0b5c2c;"
+    " border-color: #062d16; }";
 }
 
 MainWindow::MainWindow(const Config &cfg, QWidget *parent)
@@ -35,25 +51,42 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mHud.pointRadius = cfg.pointRadius;
     mPpi->setHud(mHud);
 
-    auto *topBar = new QToolBar("量程", this);
-    topBar->setMovable(false);
-    topBar->setFloatable(false);
-    topBar->setStyleSheet(
-        "QToolBar { background: #000000; border: none;"
-        " font-family: 'Noto Sans CJK SC', monospace; }"
-        "QToolBar QLabel { color: #00ff66; }"
-        "QToolBar QPushButton { background-color: #000000; color: #00ff66;"
-        " border: 1px solid #0b5c2c; min-width: 24px; min-height: 22px;"
-        " margin-left: 2px; font-size: 14px; font-weight: bold; }"
-        "QToolBar QPushButton:hover:enabled { border-color: #00ff66; }"
-        "QToolBar QPushButton:pressed { background-color: #0b3d20; }"
-        "QToolBar QPushButton:disabled { color: #0b5c2c;"
-        " border-color: #062d16; }");
-    QPalette barPal = topBar->palette();
-    barPal.setColor(QPalette::Window, Qt::black);
-    topBar->setPalette(barPal);
-    topBar->setAutoFillBackground(true);
-    addToolBar(Qt::TopToolBarArea, topBar);
+    mRadarIp = cfg.host;
+    mCanIface = cfg.canIface;
+    mFcClientPath = cfg.fcClient.isEmpty()
+        ? QDir::cleanPath(QCoreApplication::applicationDirPath()
+                          + "/../../radar_client/radar_min_client.py")
+        : cfg.fcClient;
+
+    auto makeBar = [this](const QString &title) {
+        auto *bar = new QToolBar(title, this);
+        bar->setMovable(false);
+        bar->setFloatable(false);
+        bar->setStyleSheet(QString::fromUtf8(kToolBarStyle));
+        QPalette pal = bar->palette();
+        pal.setColor(QPalette::Window, Qt::black);
+        bar->setPalette(pal);
+        bar->setAutoFillBackground(true);
+        addToolBar(Qt::TopToolBarArea, bar);
+        return bar;
+    };
+
+    // Power row sits above the range row.
+    auto *powerBar = makeBar("电源");
+    mPowerOn = new QPushButton("开机", powerBar);
+    mPowerOn->setFixedWidth(60);
+    mPowerOn->setFocusPolicy(Qt::NoFocus);
+    mPowerOn->setToolTip("启动 FC 保活与 CAN 电机，使雷达进入工作状态");
+    powerBar->addWidget(mPowerOn);
+
+    mPowerOff = new QPushButton("关机", powerBar);
+    mPowerOff->setFixedWidth(60);
+    mPowerOff->setFocusPolicy(Qt::NoFocus);
+    mPowerOff->setToolTip("停止 FC 保活并发送停电机命令");
+    powerBar->addWidget(mPowerOff);
+    addToolBarBreak(Qt::TopToolBarArea);
+
+    auto *topBar = makeBar("量程");
 
     topBar->addWidget(new QLabel("量程", topBar));
     mRangeValue = new QLabel(topBar);
@@ -95,6 +128,25 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     connect(mPpi, &PpiWidget::rangeChanged, this,
             &MainWindow::syncRangeDisplay);
 
+    // "开机" starts the FC stand-in that keeps the radar in its working
+    // state; "关机" sends SIGTERM so its close() can emit motor_stop and
+    // the idle CAN setpoint before exiting.
+    mFcProcess = new QProcess(this);
+    mFcProcess->setProcessChannelMode(QProcess::ForwardedChannels);
+    connect(mFcProcess, &QProcess::finished, this,
+            [this](int, QProcess::ExitStatus) { setPowerRunning(false); });
+    connect(mFcProcess, &QProcess::errorOccurred, this,
+            [this](QProcess::ProcessError err) {
+        if (err == QProcess::FailedToStart) {
+            std::fprintf(stderr, "[power] FC client failed to start: %s\n",
+                         qPrintable(mFcProcess->errorString()));
+            setPowerRunning(false);
+        }
+    });
+    connect(mPowerOn, &QPushButton::clicked, this, [this] { startRadar(); });
+    connect(mPowerOff, &QPushButton::clicked, this, [this] { stopRadar(); });
+    setPowerRunning(false);
+
     mClock.start();
     mHudTimer = new QTimer(this);
     connect(mHudTimer, &QTimer::timeout, this, &MainWindow::refreshHud);
@@ -110,6 +162,44 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
                 &MainWindow::onFrameReady);
         mStream->start();
     }
+}
+
+MainWindow::~MainWindow() {
+    if (mFcProcess && mFcProcess->state() != QProcess::NotRunning) {
+        mFcProcess->terminate();
+        if (!mFcProcess->waitForFinished(1000)) {
+            mFcProcess->kill();
+            mFcProcess->waitForFinished(1000);
+        }
+    }
+}
+
+void MainWindow::startRadar() {
+    if (mFcProcess->state() != QProcess::NotRunning) {
+        return;
+    }
+    setPowerRunning(true);
+    mFcProcess->start(QStringLiteral("python3"),
+                      {mFcClientPath, QStringLiteral("--can-bridge"), mCanIface,
+                       QStringLiteral("--radar-ip"), mRadarIp,
+                       QStringLiteral("--no-v2-listen")});
+}
+
+void MainWindow::stopRadar() {
+    if (mFcProcess->state() == QProcess::NotRunning) {
+        return;
+    }
+    mPowerOff->setEnabled(false);
+    mFcProcess->terminate();
+    if (!mFcProcess->waitForFinished(3000)) {
+        mFcProcess->kill();
+        mFcProcess->waitForFinished(1000);
+    }
+}
+
+void MainWindow::setPowerRunning(bool running) {
+    mPowerOn->setEnabled(!mDemoMode && !running);
+    mPowerOff->setEnabled(!mDemoMode && running);
 }
 
 void MainWindow::syncRangeDisplay(double m) {
