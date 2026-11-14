@@ -301,8 +301,9 @@ void MainWindow::onDemoTick() {
     const double phase = mDemoN * 0.02;
     for (int i = -120; i <= 120; ++i) {
         const double az = i * 1.0;
-        // Sweep the full range limit so the demo exercises red -> green ->
-        // black, and keep every elevation inside the +/-45 deg window.
+        // Sweep the full range limit so the demo exercises
+        // red -> yellow -> green -> black, and keep every elevation
+        // inside the +/-45 deg window.
         const double r = 2.5 + 21.0 * (i + 120) / 240.0
                          + 1.2 * std::sin(3.0 * az * kPi / 180.0 + phase);
         const double el = 32.0 * std::sin(2.0 * az * kPi / 180.0 + phase);

@@ -72,12 +72,20 @@ void FlatView::setPointRadius(double px) {
 QColor FlatView::rangeColor(double t) {
     t = std::clamp(t, 0.0, 1.0);
     const QColor red(226, 48, 42);
+    const QColor yellow(242, 205, 38);
     const QColor green(38, 190, 96);
     const QColor black(10, 10, 10);
-    const bool nearHalf = t <= 0.5;
-    const QColor &a = nearHalf ? red : green;
-    const QColor &b = nearHalf ? green : black;
-    const double u = nearHalf ? t / 0.5 : (t - 0.5) / 0.5;
+    // Yellow sits halfway between red and green, so green still marks the
+    // middle of the range limit (0.5) and black the far end (1.0).
+    QColor a, b;
+    double u;
+    if (t <= 0.25) {
+        a = red;    b = yellow; u = t / 0.25;
+    } else if (t <= 0.5) {
+        a = yellow; b = green;  u = (t - 0.25) / 0.25;
+    } else {
+        a = green;  b = black;  u = (t - 0.5) / 0.5;
+    }
     auto lerp = [u](int from, int to) {
         return int(from + (to - from) * u + 0.5);
     };
@@ -241,7 +249,7 @@ void FlatView::drawLegend(QPainter &p, const QRectF &plot) const {
     const double infoX = barX + barW + 18.0;
     p.setPen(kTextDim);
     p.drawText(QPointF(infoX, barY + 3.0),
-               QString::fromUtf8("距离分度：红 近 → 绿 中 → 黑 远/超量程"));
+               QString::fromUtf8("距离分度：红 近 → 黄 → 绿 中 → 黑 远/超量程"));
     p.drawText(QPointF(infoX, barY + 20.0),
                QString::fromUtf8("点数 %1   俯仰越界 %2")
                    .arg(mShown).arg(mOutOfFov));
