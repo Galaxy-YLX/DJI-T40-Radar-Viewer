@@ -25,7 +25,6 @@ struct HudState {
     double pointRadius = 0.0;
     double packetLossPct = 0.0;   // packet loss, %% since stream start
     QString source;         // point-cloud source (1E61 / 00F0 ...)
-    bool linkUp = true;     // TCP link to the board is connected
     bool sumOk = true;      // 0x00F0 header checksums passed
     double rpm = 0.0;       // motor rpm inferred from c5 (0 = unknown)
 
@@ -35,7 +34,7 @@ struct HudState {
                subtype == o.subtype && entries == o.entries &&
                rangeM == o.rangeM && pointRadius == o.pointRadius &&
                packetLossPct == o.packetLossPct && source == o.source &&
-               linkUp == o.linkUp && sumOk == o.sumOk && rpm == o.rpm;
+               sumOk == o.sumOk && rpm == o.rpm;
     }
     bool operator!=(const HudState &o) const { return !(*this == o); }
 };
@@ -81,4 +80,5 @@ private:
     // rear coverage (120..240); 0x00F0 has no forward coverage (~298..59).
     double mBlindStartDeg = 120.0;
     double mBlindEndDeg = 240.0;
+    bool mBlindLocked = false;   // fixed once a 0x00F0 frame arrives
 };

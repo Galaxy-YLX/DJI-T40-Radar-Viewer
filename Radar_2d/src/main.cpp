@@ -12,7 +12,6 @@
 
 #include "config.h"
 #include "f0decoder.h"
-#include "linkstream.h"
 #include "mainwindow.h"
 #include "sidestream.h"
 
@@ -20,15 +19,11 @@ static Config parseConfig(const QCoreApplication &app) {
     Config cfg;
     QCommandLineParser p;
     p.setApplicationDescription(
-        "DJI T40 radar — 2D PPI (azimuth x range), C++/Qt6, 0x00F0 point cloud");
+        "DJI T40 radar — 2D PPI (azimuth x range), C++/Qt6, 0x00F0 point cloud over UDP 40204");
     p.addHelpOption();
     p.addOptions({
-        {"src", "point cloud source: link (board TCP 46000) | udp (radar 40204)",
-         "link|udp", "link"},
-        {"link-host", "t40-radar-link board address", "host", "192.168.9.1"},
-        {"link-port", "T40R forwarding TCP port", "port", "46000"},
-        {"host", "radar host (UDP source only)", "host", "192.168.8.2"},
-        {"port", "radar perception UDP port (UDP source only)", "port", "40204"},
+        {"host", "radar host (radar IP)", "host", "192.168.8.2"},
+        {"port", "radar perception UDP port", "port", "40204"},
         {"range", "scope range limit in metres", "m", "25"},
         {"azimuth-offset", "azimuth rotation in degrees (forward -> top)", "deg",
          "0"},
@@ -36,7 +31,6 @@ static Config parseConfig(const QCoreApplication &app) {
         {"min-amp", "0x00F0: drop points with c3 below this", "n", "80"},
         {"min-range", "drop detections closer than this (m)", "m", "0"},
         {"point-size", "blip radius in pixels", "px", "0.5"},
-        {"rpm", "motor rpm sent over the link on power-on", "rpm", "1200"},
         {"can-iface", "SocketCAN interface used by the FC bridge", "iface",
          "can0"},
         {"fc-client", "path to radar_min_client.py (empty = auto)", "path", ""},
@@ -49,14 +43,6 @@ static Config parseConfig(const QCoreApplication &app) {
     });
     p.process(app);
 
-    const QString src = p.value("src");
-    if (src != QStringLiteral("link") && src != QStringLiteral("udp")) {
-        std::fprintf(stderr, "unknown --src '%s', using link\n",
-                     qPrintable(src));
-    }
-    cfg.source = src == QStringLiteral("udp") ? Source::Udp : Source::Link;
-    cfg.linkHost = p.value("link-host");
-    cfg.linkPort = p.value("link-port").toUShort();
     cfg.host = p.value("host");
     cfg.port = p.value("port").toUShort();
     cfg.rangeM = p.value("range").toDouble();
@@ -65,7 +51,6 @@ static Config parseConfig(const QCoreApplication &app) {
     cfg.minAmp = p.value("min-amp").toInt();
     cfg.minRangeM = p.value("min-range").toFloat();
     cfg.pointRadius = p.value("point-size").toDouble();
-    cfg.rpm = p.value("rpm").toInt();
     cfg.canIface = p.value("can-iface");
     cfg.fcClient = p.value("fc-client");
     cfg.demo = p.isSet("demo");
@@ -77,8 +62,7 @@ static Config parseConfig(const QCoreApplication &app) {
 
 static void printFrame(const SideFrame &fr) {
     const char *src = fr.source == PointSource::E61 ? "1E61/UDP"
-                    : fr.source == PointSource::F0Udp ? "00F0/UDP"
-                                                      : "00F0/link";
+                                                    : "00F0/UDP";
     std::printf("=== 2D radar one frame (%s) ===\n", src);
     std::printf("seq=%u entries=%u points=%d sum_ok=%d rpm=%.1f\n",
                 fr.frameToken, fr.entryCount, int(fr.points.size()),
@@ -116,11 +100,6 @@ static int runDumpWith(Stream &stream) {
 }
 
 static int runDump(const Config &cfg) {
-    if (cfg.source == Source::Link) {
-        LinkStream stream(cfg.linkHost, cfg.linkPort, float(cfg.offsetDeg),
-                          cfg.minAmp, cfg.minRangeM);
-        return runDumpWith(stream);
-    }
     SideStream stream(cfg.host, cfg.port, float(cfg.offsetDeg), cfg.minSnr,
                       cfg.minAmp, cfg.minRangeM);
     return runDumpWith(stream);

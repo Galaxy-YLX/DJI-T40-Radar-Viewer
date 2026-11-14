@@ -65,9 +65,35 @@ void SideStream::start() {
 }
 
 void SideStream::onReadyRead() {
-    SideFrame latest;
-    uint32_t latestSeq = 0;
-    int burstValid = 0;   // valid 1E61 frames pulled from the socket this burst
+    // UDP 40204 interleaves 0x00F0 point-cloud frames with 1E61 perception
+    // packets. The 1E61 stream currently arrives as empty frames, and its
+    // no-data wedge (120..240 deg, lower half) is opposite the 0x00F0 wedge
+    // (~298..59 deg, upper half). Replacing the display frame on every empty
+    // packet flips both the blips and the grid up/down at packet rate, so
+    // prefer the point cloud and keep the last good frame otherwise.
+    SideFrame display;
+    bool haveDisplay = false;
+    SideFrame e61;
+    int burstValid = 0;
+
+    // Packet loss is tracked on the 0x00F0 container sequence only; mixing in
+    // the 1E61 u32 sequence would make the estimate meaningless.
+    auto noteF0Loss = [this](uint32_t seq) {
+        if (mHaveSeq) {
+            const uint32_t delta = uint32_t(uint16_t(seq - mLastSeq));
+            if (delta >= 1 && delta <= 1000) {
+                mExpected += delta;
+                ++mReceived;
+                if (mExpected > 0) {
+                    mPacketLossPct =
+                        100.0 * double(mExpected - mReceived) / double(mExpected);
+                }
+            }
+        }
+        mLastSeq = seq;
+        mHaveSeq = true;
+    };
+
     while (mSocket.hasPendingDatagrams()) {
         const qint64 size = mSocket.pendingDatagramSize();
         if (size <= 0) {
@@ -78,8 +104,7 @@ void SideStream::onReadyRead() {
         mSocket.readDatagram(d.data(), d.size());
         SideFrame fr = decode(d, mOffsetDeg, mMinSnr, mMinRangeM);
         if (!fr.valid) {
-            // The same UDP port also carries the 0x00F0 black-box point
-            // cloud decoded by t40-radar-link.
+            // The same UDP port also carries the 0x00F0 black-box point cloud.
             const F0Frame f0 = F0::decode(
                 reinterpret_cast<const uint8_t *>(d.constData()), d.size());
             if (f0.valid) {
@@ -90,42 +115,45 @@ void SideStream::onReadyRead() {
         if (!fr.valid) {
             continue;
         }
-        if (fr.source == PointSource::E61 && fr.subtype <= 2) {
-            mAccum[fr.subtype] = fr.points;
-        }
-        latest = std::move(fr);
-        latestSeq = latest.frameToken;
         ++burstValid;
+        if (fr.source == PointSource::F0Udp) {
+            mSeenF0 = true;
+            display = std::move(fr);
+            haveDisplay = true;
+            noteF0Loss(display.frameToken);
+        } else if (!mSeenF0 && fr.source == PointSource::E61) {
+            // Only fall back to 1E61 when no point cloud has ever arrived.
+            // Its sparse detections and opposite no-data wedge would make
+            // the PPI flip up/down whenever it interleaves with 0x00F0.
+            // An empty subtype frame must not wipe the accumulated points.
+            if (fr.subtype <= 2 && !fr.points.isEmpty()) {
+                mAccum[fr.subtype] = fr.points;
+            }
+            e61 = std::move(fr);
+        }
     }
-    if (!latest.valid) {
+    if (burstValid == 0) {
         return;
     }
 
-    if (latest.source == PointSource::E61) {
-        // Combine the three subtypes into one stable display frame.
-        latest.points.clear();
+    if (!haveDisplay) {
+        if (!e61.valid) {
+            return;
+        }
+        // Combine the three 1E61 subtypes, but only display them when there
+        // are real detections: an empty burst keeps the previous point cloud.
+        QVector<SectorPoint> pts;
         for (int s = 0; s < 3; ++s) {
-            latest.points += mAccum[s];
+            pts += mAccum[s];
         }
+        if (pts.isEmpty()) {
+            return;
+        }
+        e61.points = pts;
+        display = std::move(e61);
     }
-    mLatest = std::move(latest);
 
-    // Packet-loss estimate from sequence gaps (u32 for 1E61, u16 for 0x00F0).
-    if (mHaveSeq) {
-        const uint32_t delta = latest.source == PointSource::E61
-            ? latestSeq - mLastSeq
-            : uint32_t(uint16_t(latestSeq - mLastSeq));
-        if (delta >= 1 && delta <= 100000) {
-            mExpected += delta;
-            mReceived += burstValid;
-            if (mExpected > 0) {
-                mPacketLossPct =
-                    100.0 * double(mExpected - mReceived) / double(mExpected);
-            }
-        }
-    }
-    mLastSeq = latestSeq;
-    mHaveSeq = true;
+    mLatest = std::move(display);
     emit frameReady();
 }
 

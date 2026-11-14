@@ -9,7 +9,6 @@
 enum class PointSource {
     E61,     // DJI 1E61 v2 perception entries (UDP 40204)
     F0Udp,   // 0x00F0 black-box points, straight from radar UDP 40204
-    F0Link,  // 0x00F0 points forwarded by the t40-radar-link board (TCP 46000)
 };
 
 // One decoded detection, already in PPI polar coordinates.
@@ -20,7 +19,7 @@ struct SectorPoint {
 };
 
 // One decoded radar frame, projected into PPI polar coordinates. Either the
-// 1E61 entries or the 0x00F0 point cloud from t40-radar-link fills it.
+// 1E61 entries or the 0x00F0 point cloud fills it.
 struct SideFrame {
     bool valid = false;
     PointSource source = PointSource::E61;
@@ -35,7 +34,7 @@ struct SideFrame {
 };
 
 // Receives the radar's perception stream on UDP 40204 and decodes both the
-// 0x00F0 point cloud (t40-radar-link format) and legacy 1E61 v2 entries.
+// 0x00F0 point cloud and legacy 1E61 v2 entries.
 // Emits frameReady() for every decoded frame (all on the Qt event loop).
 class SideStream : public QObject {
     Q_OBJECT
@@ -48,7 +47,7 @@ public:
     void stop() { mSocket.close(); }
     const SideFrame &latest() const { return mLatest; }
 
-    // Cumulative UDP packet-loss estimate (%%), derived from V2 seq gaps.
+    // Cumulative 0x00F0 frame-loss estimate (%), from container seq gaps.
     double packetLossPct() const { return mPacketLossPct; }
 
 signals:
@@ -71,11 +70,15 @@ private:
     SideFrame mLatest;
 
     // The 1E61 stream interleaves three subtypes (0=ground, 1=wire, 2=pcla)
-    // in separate frames. Keep the latest points per subtype and combine them
-    // so the PPI shows a stable picture instead of flickering one subtype.
+    // in separate frames. Keep the latest non-empty points per subtype and
+    // combine them so the PPI shows a stable picture.
     QVector<SectorPoint> mAccum[3];
 
-    // Packet-loss accounting via 1E61 V2 / 0x00F0 sequence numbers.
+    // Once a 0x00F0 point cloud has arrived it is the only display source:
+    // 1E61 frames use a different no-data wedge and would flip the PPI.
+    bool mSeenF0 = false;
+
+    // Packet-loss accounting via 0x00F0 container sequence numbers.
     uint32_t mLastSeq = 0;
     bool mHaveSeq = false;
     qulonglong mExpected = 0;

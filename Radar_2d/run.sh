@@ -2,26 +2,20 @@
 # One-click launcher for the DJI T40 2D radar viewer (C++/Qt6).
 #
 # Usage:
-#   ./run.sh                local mode (default): PC replaces the board, start
-#                           AP/CAN/FC gate/T40R bridge, view 127.0.0.1:46000
-#   ./run.sh local          same as default
-#   ./run.sh local-stop     stop that local link
-#   ./run.sh link           external t40-radar-link board TCP 192.168.9.1:46000
-#   ./run.sh udp            direct radar UDP 40204 (0x00F0 or legacy 1E61),
-#                           needs the local AP + CAN setup and the FC client
+#   ./run.sh                udp mode (default): attach directly to the radar's
+#                           perception stream on UDP 40204
+#   ./run.sh udp            same as default
 #   ./run.sh demo           synthetic points, no radar hardware
-#   ./run.sh dump           decode one frame as text; SRC=udp for the UDP source
+#   ./run.sh dump           decode one UDP frame as text and exit
 #   ./run.sh selftest       check the 0x00F0 decoder against real recorded frames
 #
-# The local/udp/dump-udp modes automatically check and (re)configure the
-# environment (LOCAL_BIND / SKIP_HW pass through to the local link script):
+# udp / dump automatically check and (re)configure the environment:
 #   - host owns 192.168.8.1  (AR1021x AP)  -> setup/start_ap.sh
 #   - can0 is up             (PCAN-USB)     -> setup/start_can.sh
 # Set AUTO_SETUP=0 to only check (and fail with a hint) instead of running sudo.
 #
 # Environment overrides:
-#   LINK_HOST (192.168.9.1)  LINK_PORT (46000)  MIN_AMP (80)  RPM (1200)
-#   RADAR_IP (192.168.8.2)  CAN_IFACE (can0)
+#   RADAR_IP (192.168.8.2)  CAN_IFACE (can0)  MIN_AMP (80)
 #   RANGE (25)  POINT_SIZE (0.5)  AZIMUTH_OFFSET (0)  MIN_SNR (0)  MIN_RANGE (0)
 #   FLIP (1)  — 1 mirrors the point cloud left-right, 0 disables the mirror
 set -euo pipefail
@@ -29,12 +23,9 @@ cd "$(dirname "$0")"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 BIN=build/radar2d
-LINK_HOST="${LINK_HOST:-192.168.9.1}"
-LINK_PORT="${LINK_PORT:-46000}"
-MIN_AMP="${MIN_AMP:-80}"
-RPM="${RPM:-1200}"
 RADAR_IP="${RADAR_IP:-192.168.8.2}"
 CAN_IFACE="${CAN_IFACE:-can0}"
+MIN_AMP="${MIN_AMP:-80}"
 RANGE="${RANGE:-25}"
 POINT_SIZE="${POINT_SIZE:-0.5}"
 AZIMUTH_OFFSET="${AZIMUTH_OFFSET:-0}"
@@ -48,7 +39,7 @@ if [ "$FLIP" = "0" ]; then
     FLIP_ARGS=(--no-flip)
 fi
 
-# ── Environment auto-config (direct-radar modes only) ───────────────────
+# ── Environment auto-config ───────────────────────────────────────────────
 ensure_env() {
     local ip_ok=0 can_ok=0
 
@@ -61,7 +52,7 @@ ensure_env() {
     fi
 
     if [ "$ip_ok" = 1 ] && [ "$can_ok" = 1 ]; then
-        echo "[env] link OK (192.168.8.1 owned, $CAN_IFACE up)"
+        echo "[env] AP/CAN OK (192.168.8.1 owned, $CAN_IFACE up)"
         return 0
     fi
 
@@ -102,14 +93,13 @@ fi
 
 COMMON_ARGS=(--range "$RANGE" --point-size "$POINT_SIZE"
              --azimuth-offset "$AZIMUTH_OFFSET" --min-snr "$MIN_SNR"
-             --min-range "$MIN_RANGE" --min-amp "$MIN_AMP" --rpm "$RPM"
+             --min-range "$MIN_RANGE" --min-amp "$MIN_AMP"
              "${FLIP_ARGS[@]}")
-LINK_ARGS=(--src link --link-host "$LINK_HOST" --link-port "$LINK_PORT")
-UDP_ARGS=(--src udp --host "$RADAR_IP"
+UDP_ARGS=(--host "$RADAR_IP"
           --can-iface "$CAN_IFACE"
           --fc-client "$ROOT/radar_client/radar_min_client.py")
 
-MODE="${1:-local}"
+MODE="${1:-udp}"
 case "$MODE" in
   demo)
     exec "$BIN" --demo --range "$RANGE" --point-size 0.5 "${FLIP_ARGS[@]}"
@@ -120,31 +110,14 @@ case "$MODE" in
         "$ROOT/t40-radar-link/android/app/src/test/resources/frames.bin:$ROOT/t40-radar-link/android/app/src/test/resources/expected.txt"
     ;;
   dump)
-    if [ "${SRC:-link}" = "udp" ]; then
-        ensure_env
-        echo "[run] starting FC client (can-bridge $CAN_IFACE, no v2 listen) ..."
-        python3 "$ROOT/radar_client/radar_min_client.py" \
-            --can-bridge "$CAN_IFACE" --radar-ip "$RADAR_IP" --no-v2-listen \
-            >/tmp/radar2d_fc.log 2>&1 &
-        FC_PID=$!
-        trap 'kill "$FC_PID" 2>/dev/null || true' EXIT
-        exec "$BIN" --src udp --host "$RADAR_IP" --dump "${COMMON_ARGS[@]}"
-    fi
-    exec "$BIN" "${LINK_ARGS[@]}" --dump "${COMMON_ARGS[@]}"
-    ;;
-  local)
-    PORT="$LINK_PORT" BIND="${LOCAL_BIND:-127.0.0.1}" \
-        "$ROOT/t40-radar-link/setup/start_local.sh" start
-    echo "[run] 0x00F0 point cloud from the local bridge 127.0.0.1:$LINK_PORT ..."
-    exec "$BIN" --src link --link-host 127.0.0.1 --link-port "$LINK_PORT" \
-        "${COMMON_ARGS[@]}"
-    ;;
-  local-stop)
-    exec "$ROOT/t40-radar-link/setup/start_local.sh" stop
-    ;;
-  link|live)
-    echo "[run] 0x00F0 point cloud over $LINK_HOST:$LINK_PORT (press 开机 to start the radar) ..."
-    exec "$BIN" "${LINK_ARGS[@]}" "${COMMON_ARGS[@]}"
+    ensure_env
+    echo "[run] starting FC client (can-bridge $CAN_IFACE, no v2 listen) ..."
+    python3 "$ROOT/radar_client/radar_min_client.py" \
+        --can-bridge "$CAN_IFACE" --radar-ip "$RADAR_IP" --no-v2-listen \
+        >/tmp/radar2d_fc.log 2>&1 &
+    FC_PID=$!
+    trap 'kill "$FC_PID" 2>/dev/null || true' EXIT
+    exec "$BIN" --host "$RADAR_IP" --dump "${COMMON_ARGS[@]}"
     ;;
   udp)
     ensure_env
@@ -154,7 +127,7 @@ case "$MODE" in
     "$BIN" "${UDP_ARGS[@]}" "${COMMON_ARGS[@]}"
     ;;
   *)
-    echo "usage: $0 [local|local-stop|link|udp|demo|dump|selftest]" >&2
+    echo "usage: $0 [udp|demo|dump|selftest]" >&2
     exit 1
     ;;
 esac

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 namespace {
 constexpr double kPi = 3.14159265358979323846;
@@ -27,8 +28,22 @@ PpiWidget::PpiWidget(QWidget *parent) : QWidget(parent) {
 
 void PpiWidget::setFrame(const SideFrame &fr) {
     mPoints = fr.points;
-    mBlindStartDeg = fr.blindStartDeg;
-    mBlindEndDeg = fr.blindEndDeg;
+    // The 0x00F0 point cloud describes the radar's real coverage wedge.
+    // Keep it fixed afterwards: 1E61 frames carry the opposite wedge, and
+    // letting them rewrite it flips the whole grid up/down on each frame.
+    if (!mBlindLocked || fr.source == PointSource::F0Udp) {
+        mBlindStartDeg = fr.blindStartDeg;
+        mBlindEndDeg = fr.blindEndDeg;
+        if (fr.source == PointSource::F0Udp) {
+            mBlindLocked = true;
+        }
+    }
+    if (std::getenv("RADAR2D_PPI_DEBUG")) {
+        std::fprintf(stderr,
+                     "[ppi] src=%d pts=%d blind=%.1f..%.1f locked=%d\n",
+                     int(fr.source), int(fr.points.size()), mBlindStartDeg,
+                     mBlindEndDeg, int(mBlindLocked));
+    }
     update();
 }
 
@@ -213,8 +228,7 @@ void PpiWidget::drawHud(QPainter &p) {
     const QString title = h.demo ? QString("[ T40雷达 / 演示 ]")
                                  : QString("[ T40雷达 ]");
     const QString badge =
-        !h.linkUp ? QString("[ 断链 ]  --.- Hz")
-        : (h.live && !h.sumOk)
+        (h.live && !h.sumOk)
             ? QString("[ 校验! ] %1 Hz").arg(h.fps, 0, 'f', 1)
         : !h.live ? QString("[ 等待 ]  --.- Hz")
         : (streaming

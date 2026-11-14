@@ -14,8 +14,6 @@ add_executable(radar2d
     src/sidestream.cpp
     src/f0decoder.h
     src/f0decoder.cpp
-    src/linkstream.h
-    src/linkstream.cpp
     src/ppiwidget.h
     src/ppiwidget.cpp
     src/mainwindow.h
