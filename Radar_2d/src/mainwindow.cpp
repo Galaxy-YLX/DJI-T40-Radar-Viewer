@@ -124,8 +124,10 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mRangeMinus->setFocusPolicy(Qt::NoFocus);
     topBar->addWidget(mRangeMinus);
 
-    topBar->addSeparator();
-    auto *viewToggle = new QPushButton("展开视图", topBar);
+    // View toggle gets its own toolbar row, directly below the range row.
+    addToolBarBreak(Qt::TopToolBarArea);
+    auto *viewBar = makeBar("视图");
+    auto *viewToggle = new QPushButton("展开视图", viewBar);
     viewToggle->setCheckable(true);
     viewToggle->setChecked(true);
     viewToggle->setFocusPolicy(Qt::NoFocus);
@@ -134,7 +136,7 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     viewToggle->setStyleSheet(
         "QPushButton:checked { background-color: #0b3d20;"
         " border-color: #00ff66; }");
-    topBar->addWidget(viewToggle);
+    viewBar->addWidget(viewToggle);
     connect(viewToggle, &QPushButton::toggled, mFlat, &QWidget::setVisible);
 
     auto *central = new QWidget(this);
