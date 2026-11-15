@@ -27,20 +27,22 @@ constexpr int kFpsWindowMs = 2000;  // sliding window for the instant frame rate
 constexpr int kFpsStaleMs = 500;    // no frame this long -> 0 Hz
 constexpr int kHudRefreshMs = 200;  // status text refresh, decoupled from frames
 
+// Every toolbar button follows the power buttons' current spec: 18px label
+// with 1px vertical / 12px horizontal padding, width following its text.
 constexpr const char *kToolBarStyle =
     "QToolBar { background: #000000; border: none;"
     " font-family: 'Noto Sans CJK SC', monospace; }"
     "QToolBar QLabel { color: #00ff66; }"
     "QToolBar QPushButton { background-color: #000000; color: #00ff66;"
     " border: 1px solid #0b5c2c; min-width: 24px; min-height: 22px;"
-    " margin-left: 2px; font-size: 14px; font-weight: bold; }"
+    " margin-left: 2px; font-size: 18px; padding: 1px 12px;"
+    " font-weight: bold; }"
     "QToolBar QPushButton:hover:enabled { border-color: #00ff66; }"
     "QToolBar QPushButton:pressed { background-color: #0b3d20; }"
     "QToolBar QPushButton:disabled { color: #0b5c2c;"
     " border-color: #062d16; }"
-    // Power buttons: half a font size of side padding (13px), with a
-    // tighter vertical pad so the toolbar row stays compact.
-    "QPushButton#powerButton { font-size: 18px; padding: 1px 12px; }";
+    // The +/- range buttons keep their original compact 14px design.
+    "QPushButton#rangeButton { font-size: 14px; padding: 0px; }";
 }
 
 MainWindow::MainWindow(const Config &cfg, QWidget *parent)
@@ -113,11 +115,13 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     topBar->addWidget(rangeUnit);
 
     mRangePlus = new QPushButton("+", topBar);
+    mRangePlus->setObjectName("rangeButton");
     mRangePlus->setToolTip("量程 +5 m");
     mRangePlus->setFocusPolicy(Qt::NoFocus);
     topBar->addWidget(mRangePlus);
 
     mRangeMinus = new QPushButton("−", topBar);
+    mRangeMinus->setObjectName("rangeButton");
     mRangeMinus->setToolTip("量程 -5 m");
     mRangeMinus->setFocusPolicy(Qt::NoFocus);
     topBar->addWidget(mRangeMinus);
