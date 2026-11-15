@@ -12,7 +12,7 @@ class QPaintEvent;
 // Azimuth/elevation "unrolled" view: the +/-120 deg forward sector is laid
 // out left -> right (240, 270, 300, 330, 000, 030, 060, 090, 120) and
 // elevation runs +45 deg (top) -> -45 deg (bottom). Distance is encoded as
-// a discrete red -> yellow -> green -> black colour scale instead of a position.
+// a discrete red -> yellow -> green colour scale instead of a position.
 class FlatView : public QWidget {
     Q_OBJECT
 public:
