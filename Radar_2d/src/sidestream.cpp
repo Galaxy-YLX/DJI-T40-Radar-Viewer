@@ -1,5 +1,6 @@
 #include "sidestream.h"
 
+#include <QDateTime>
 #include <QHostAddress>
 #include <QNetworkProxy>
 #include <cstdio>
@@ -15,6 +16,7 @@ SideStream::SideStream(const QString &host, quint16 port, float azimuthOffsetDeg
       mOffsetDeg(azimuthOffsetDeg),
       mMinAmp(minAmp),
       mMinRangeM(minRangeM) {
+    mClock.start();
     connect(&mSocket, &QUdpSocket::readyRead, this, &SideStream::onReadyRead);
 }
 
@@ -32,7 +34,9 @@ void SideStream::start() {
 void SideStream::onReadyRead() {
     // UDP 40204 also carries 1E61 perception packets. The 2D PPI consumes
     // only the 0x00F0 point cloud, so every other datagram is ignored.
-    SideFrame display;
+    // Every valid datagram is emitted as its own frame: a burst of N packets
+    // must produce N frames, not just the last one, otherwise dt and the
+    // frame sequence fed to a tracker are both wrong.
     while (mSocket.hasPendingDatagrams()) {
         const qint64 size = mSocket.pendingDatagramSize();
         if (size <= 0) {
@@ -46,10 +50,22 @@ void SideStream::onReadyRead() {
         if (!f0.valid) {
             continue;
         }
-        display = F0::toSideFrame(f0, mOffsetDeg, mMinAmp, mMinRangeM);
+        SideFrame fr = F0::toSideFrame(f0, mOffsetDeg, mMinAmp, mMinRangeM);
 
-        // Packet loss is tracked on the 0x00F0 container sequence only.
-        const uint32_t seq = display.frameToken;
+        // Frame header. recvMonoUs is the primary time base: c5 wraps every
+        // 65.536 ms, which is the same order as one revolution (50 ms at
+        // 1200 rpm), so it cannot be used as an absolute timestamp here.
+        const qint64 nowUs = mClock.nsecsElapsed() / 1000;
+        fr.frameIndex = mFrameIndex++;
+        fr.recvMonoUs = nowUs;
+        fr.tsWallMs = QDateTime::currentMSecsSinceEpoch();
+        fr.dtMs = mLastMonoUs > 0 ? double(nowUs - mLastMonoUs) / 1000.0 : 0.0;
+        fr.revUs = fr.rpm > 0.0 ? 60e6 / fr.rpm : 0.0;
+        mLastMonoUs = nowUs;
+
+        // Packet loss is tracked on the 0x00F0 container sequence only,
+        // once per frame (not once per readyRead burst).
+        const uint32_t seq = fr.frameToken;
         if (mHaveSeq) {
             const uint32_t delta = uint32_t(uint16_t(seq - mLastSeq));
             if (delta >= 1 && delta <= 1000) {
@@ -63,10 +79,8 @@ void SideStream::onReadyRead() {
         }
         mLastSeq = seq;
         mHaveSeq = true;
+
+        mLatest = fr;
+        emit frameReady(fr);
     }
-    if (!display.valid) {
-        return;
-    }
-    mLatest = std::move(display);
-    emit frameReady();
 }

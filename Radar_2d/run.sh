@@ -6,8 +6,11 @@
 #                           perception stream on UDP 40204
 #   ./run.sh udp            same as default
 #   ./run.sh demo           synthetic points, no radar hardware
+#                           (extra args are forwarded, e.g. --record x.jsonl)
 #   ./run.sh dump           decode one UDP frame as text and exit
-#   ./run.sh selftest       check the 0x00F0 decoder against real recorded frames
+#   ./run.sh selftest       decoder + frame-pipeline / replay regression
+#   ./run.sh record x.jsonl live UDP + JSONL frame recording
+#   ./run.sh replay x.jsonl [speed]   JSONL replay with transport controls
 #
 # udp / dump automatically check and (re)configure the environment:
 #   - host owns 192.168.8.1  (AR1021x AP)  -> setup/start_ap.sh
@@ -101,12 +104,28 @@ UDP_ARGS=(--host "$RADAR_IP"
 MODE="${1:-udp}"
 case "$MODE" in
   demo)
-    exec "$BIN" --demo --range "$RANGE" --point-size 0.5 "${FLIP_ARGS[@]}"
+    shift 1
+    exec "$BIN" --demo --range "$RANGE" --point-size 0.5 "${FLIP_ARGS[@]}" "$@"
     ;;
   selftest)
     export QT_QPA_PLATFORM=offscreen
-    exec "$BIN" --selftest \
-        "$ROOT/t40-radar-link/android/app/src/test/resources/frames.bin:$ROOT/t40-radar-link/android/app/src/test/resources/expected.txt"
+    V="$ROOT/t40-radar-link/android/app/src/test/resources"
+    "$BIN" --selftest "$V/frames.bin:$V/expected.txt"
+    "$BIN" --selftest "pipe:$V/frames.bin:$V/expected.txt"
+    ;;
+  replay)
+    [ "$#" -ge 2 ] || { echo "usage: $0 replay <file.jsonl> [speed] [args...]" >&2; exit 1; }
+    FILE="$2"
+    shift 2
+    exec "$BIN" --replay "$FILE" "${COMMON_ARGS[@]}" "$@"
+    ;;
+  record)
+    [ "$#" -ge 2 ] || { echo "usage: $0 record <file.jsonl> [args...]" >&2; exit 1; }
+    ensure_env
+    FILE="$2"
+    shift 2
+    echo "[run] live UDP + recording to $FILE ..."
+    exec "$BIN" --record "$FILE" "${UDP_ARGS[@]}" "${COMMON_ARGS[@]}" "$@"
     ;;
   dump)
     ensure_env
@@ -126,7 +145,7 @@ case "$MODE" in
     "$BIN" "${UDP_ARGS[@]}" "${COMMON_ARGS[@]}"
     ;;
   *)
-    echo "usage: $0 [udp|demo|dump|selftest]" >&2
+    echo "usage: $0 [udp|demo|dump|selftest|record <file>|replay <file> [speed]]" >&2
     exit 1
     ;;
 esac

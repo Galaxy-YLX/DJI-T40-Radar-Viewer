@@ -26,6 +26,11 @@ struct HudState {
     QString source;         // point-cloud source (00F0/UDP / 演示)
     bool sumOk = true;      // 0x00F0 header checksums passed
     double rpm = 0.0;       // motor rpm inferred from c5 (0 = unknown)
+    quint32 frameIndex = 0; // local monotonic frame number
+    double dtMs = 0.0;      // measured inter-frame interval
+    int buffered = 0;       // frames held in the ring buffer
+    bool recording = false; // JSONL recorder active
+    QString mode;           // 实时 / 暂停 / 回放
 
     bool operator==(const HudState &o) const {
         return live == o.live && demo == o.demo && fps == o.fps &&
@@ -33,7 +38,10 @@ struct HudState {
                entries == o.entries &&
                rangeM == o.rangeM && pointRadius == o.pointRadius &&
                packetLossPct == o.packetLossPct && source == o.source &&
-               sumOk == o.sumOk && rpm == o.rpm;
+               sumOk == o.sumOk && rpm == o.rpm &&
+               frameIndex == o.frameIndex && dtMs == o.dtMs &&
+               buffered == o.buffered && recording == o.recording &&
+               mode == o.mode;
     }
     bool operator!=(const HudState &o) const { return !(*this == o); }
 };

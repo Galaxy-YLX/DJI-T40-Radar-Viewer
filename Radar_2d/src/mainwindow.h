@@ -6,14 +6,18 @@
 #include <deque>
 
 #include "config.h"
+#include "frameio.h"
 #include "ppiwidget.h"
 
 class SideStream;
 class FlatView;
+class ReplaySource;
 class QTimer;
 class QLabel;
 class QProcess;
 class QPushButton;
+class QSlider;
+class QComboBox;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -21,13 +25,27 @@ public:
     explicit MainWindow(const Config &cfg, QWidget *parent = nullptr);
     ~MainWindow() override;
 
+private:
+    enum class PlayState { Live, Paused, Replay };
+
 private slots:
-    void onFrameReady();
+    void onFrameReady(const SideFrame &fr);
+    void onReplayFrame(const SideFrame &fr);
+    void onReplayState();
     void onDemoTick();
     void refreshHud();
+    void togglePause();
+    void stepFrame(int delta);
+    void seekTo(int cursor);
+    void toggleRecording();
+    void backToLive();
 
 private:
     void applyFrame(const SideFrame &fr);
+    void showStored(int cursor);
+    void updateTransport();
+    void startLiveSource();
+    void setupReplay();
     void syncRangeDisplay(double m);
     void startRadar();
     void stopRadar();
@@ -36,6 +54,7 @@ private:
     PpiWidget *mPpi;
     FlatView *mFlat = nullptr;
     SideStream *mStream = nullptr;
+    ReplaySource *mReplay = nullptr;
     QTimer *mDemoTimer = nullptr;
     QTimer *mHudTimer = nullptr;
     QProcess *mFcProcess = nullptr;
@@ -44,6 +63,25 @@ private:
     QPushButton *mRangeMinus = nullptr;
     QPushButton *mPowerOn = nullptr;
     QPushButton *mPowerOff = nullptr;
+    QPushButton *mPlayPause = nullptr;
+    QPushButton *mStepBack = nullptr;
+    QPushButton *mStepFwd = nullptr;
+    QPushButton *mRecordBtn = nullptr;
+    QPushButton *mLiveBtn = nullptr;
+    QSlider *mSeek = nullptr;
+    QComboBox *mSpeedBox = nullptr;
+    QLabel *mFrameLabel = nullptr;
+
+    Config mCfg;
+    FrameMeta mMeta;
+    FrameStore mStore;
+    FrameRecorder mRecorder;
+    PlayState mState = PlayState::Live;
+    int mCursor = -1;                 // cursor into mStore (live/paused)
+    quint32 mCursorFrameIndex = 0;    // survives ring-buffer rollover
+    bool mRecording = false;
+    bool mUpdatingSeek = false;
+
     QString mRadarIp;
     QString mCanIface;
     QString mFcClientPath;
@@ -53,5 +91,7 @@ private:
     HudState mHud;
     int mFrames = 0;
     int mDemoN = 0;
+    quint32 mDemoIndex = 0;
+    qint64 mDemoLastUs = 0;
     double mOffsetDeg;
 };

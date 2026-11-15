@@ -1,9 +1,11 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QDir>
 #include <QEventLoop>
 #include <QFile>
 #include <QStringList>
+#include <QTemporaryFile>
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
@@ -12,6 +14,7 @@
 
 #include "config.h"
 #include "f0decoder.h"
+#include "frameio.h"
 #include "mainwindow.h"
 #include "sidestream.h"
 
@@ -39,6 +42,11 @@ static Config parseConfig(const QCoreApplication &app) {
         {"dump", "decode one frame as text and exit"},
         {"selftest", "verify 0x00F0 decoding: frames.bin:expected.txt", "spec",
          ""},
+        {"record", "record every decoded frame to a JSONL file", "path", ""},
+        {"replay", "replay a recorded JSONL instead of live UDP", "path", ""},
+        {"speed", "replay speed multiplier", "x", "1"},
+        {"loop", "loop replay when the end of the file is reached"},
+        {"auto-exit", "quit after N ms (offscreen regression)", "ms", "0"},
     });
     p.process(app);
 
@@ -55,14 +63,21 @@ static Config parseConfig(const QCoreApplication &app) {
     cfg.dump = p.isSet("dump");
     cfg.selftest = p.value("selftest");
     cfg.flipLeftRight = !p.isSet("no-flip");
+    cfg.recordPath = p.value("record");
+    cfg.replayPath = p.value("replay");
+    cfg.speed = std::max(0.05, p.value("speed").toDouble());
+    cfg.loop = p.isSet("loop");
+    cfg.autoExitMs = p.value("auto-exit").toInt();
     return cfg;
 }
 
 static void printFrame(const SideFrame &fr) {
     std::printf("=== 2D radar one frame (00F0/UDP) ===\n");
-    std::printf("seq=%u entries=%u points=%d sum_ok=%d rpm=%.1f\n",
+    std::printf("seq=%u entries=%u points=%d raw=%d sum_ok=%d rpm=%.1f\n",
                 fr.frameToken, fr.entryCount, int(fr.points.size()),
-                int(fr.sumOk), fr.rpm);
+                int(fr.rawPoints.size()), int(fr.sumOk), fr.rpm);
+    std::printf("frame=%u ts=%lldus dt=%.2fms rev=%.0fus\n",
+                fr.frameIndex, (long long)fr.recvMonoUs, fr.dtMs, fr.revUs);
     if (!fr.points.isEmpty()) {
         float rmin = 1e9f, rmax = -1e9f, smin = 1e9f, smax = -1e9f;
         for (const SectorPoint &pt : fr.points) {
@@ -80,9 +95,10 @@ template <class Stream>
 static int runDumpWith(Stream &stream) {
     QEventLoop loop;
     bool got = false;
-    QObject::connect(&stream, &Stream::frameReady, [&]() {
+    QObject::connect(&stream, &Stream::frameReady,
+                     [&](const SideFrame &fr) {
         got = true;
-        printFrame(stream.latest());
+        printFrame(fr);
         loop.quit();
     });
     QTimer::singleShot(8000, &loop, &QEventLoop::quit);
@@ -173,12 +189,276 @@ static int runSelftest(const QString &spec) {
     return (checked >= 10 && failed == 0) ? 0 : 1;
 }
 
+// Read the "[u32 LE length][UDP payload]..." test-vector container.
+static QList<QByteArray> readFramesBin(const QString &path, QString *err) {
+    QList<QByteArray> out;
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        if (err) {
+            *err = QStringLiteral("cannot open %1: %2")
+                       .arg(path, f.errorString());
+        }
+        return out;
+    }
+    const QByteArray bin = f.readAll();
+    int off = 0;
+    while (off + 4 <= bin.size()) {
+        const uint8_t *p =
+            reinterpret_cast<const uint8_t *>(bin.constData()) + off;
+        const quint32 len = quint32(p[0]) | (quint32(p[1]) << 8)
+                          | (quint32(p[2]) << 16) | (quint32(p[3]) << 24);
+        off += 4;
+        if (len == 0 || off + int(len) > bin.size()) {
+            break;   // tolerate trailing padding
+        }
+        out.append(bin.mid(off, int(len)));
+        off += int(len);
+    }
+    return out;
+}
+
+// Phase-0 regression: frame pipeline integrity, ring buffer, JSONL
+// record/replay round-trip, threshold re-projection and truncated-file
+// rejection. Usage: --selftest pipe:frames.bin:expected.txt
+static int runPipeSelftest(const QString &spec) {
+    const QStringList paths =
+        spec.mid(5).split(QLatin1Char(':'), Qt::SkipEmptyParts);
+    if (paths.size() != 2) {
+        std::fprintf(stderr, "pipe selftest expects pipe:frames.bin:expected.txt\n");
+        return 2;
+    }
+    QString err;
+    const QList<QByteArray> packets = readFramesBin(paths.at(0), &err);
+    if (!err.isEmpty() || packets.isEmpty()) {
+        std::fprintf(stderr, "pipe selftest: %s\n",
+                     qPrintable(err.isEmpty() ? QStringLiteral("no packets") : err));
+        return 2;
+    }
+    QFile fe(paths.at(1));
+    if (!fe.open(QIODevice::ReadOnly)) {
+        std::fprintf(stderr, "pipe selftest: cannot open %s\n",
+                     qPrintable(paths.at(1)));
+        return 2;
+    }
+    QVector<int> expectedN;
+    for (const QString &line :
+         QString::fromUtf8(fe.readAll()).split(QLatin1Char('\n'))) {
+        if (line.trimmed().isEmpty() || line.trimmed().startsWith(QLatin1Char('#'))) {
+            continue;
+        }
+        expectedN.push_back(line.trimmed()
+                                .split(QLatin1Char(' '), Qt::SkipEmptyParts)
+                                .at(0).toInt());
+    }
+
+    int failed = 0;
+    auto check = [&](bool ok, const char *what) {
+        if (!ok) {
+            std::fprintf(stderr, "pipe selftest: %s\n", what);
+            ++failed;
+        }
+    };
+
+    FrameMeta meta;
+    meta.minAmp = 80;
+    meta.minRangeM = 0.0f;
+    meta.offsetDeg = 0.0;
+    meta.rangeM = 25.0;
+    meta.source = QStringLiteral("selftest");
+
+    // 1. One emitted frame per datagram, with a continuous frame header.
+    FrameStore store;
+    QVector<SideFrame> frames;
+    qint64 mono = 0;
+    for (int k = 0; k < packets.size(); ++k) {
+        const F0Frame f = F0::decode(
+            reinterpret_cast<const uint8_t *>(packets.at(k).constData()),
+            packets.at(k).size());
+        if (!f.valid) {
+            check(false, "invalid F0 frame in test vector");
+            continue;
+        }
+        SideFrame fr = F0::toSideFrame(f, float(meta.offsetDeg), meta.minAmp,
+                                       meta.minRangeM);
+        fr.frameIndex = quint32(frames.size());
+        mono += 1000;                     // simulated 1 ms inter-frame gap
+        fr.recvMonoUs = mono;
+        fr.tsWallMs = 1700000000000LL + mono / 1000;
+        fr.dtMs = frames.isEmpty() ? 0.0 : 1.0;
+        fr.revUs = fr.rpm > 0.0 ? 60e6 / fr.rpm : 0.0;
+        frames.push_back(fr);
+        store.append(fr);
+    }
+    check(frames.size() == packets.size(), "frame count != packet count");
+    check(frames.size() == expectedN.size(), "frame count != expected.txt rows");
+    for (int i = 0; i < frames.size(); ++i) {
+        if (frames.at(i).frameIndex != quint32(i)) {
+            check(false, "frameIndex is not continuous");
+            break;
+        }
+        if (i > 0 && frames.at(i).recvMonoUs <= frames.at(i - 1).recvMonoUs) {
+            check(false, "recvMonoUs is not strictly increasing");
+            break;
+        }
+        if (i < expectedN.size()
+            && frames.at(i).rawPoints.size() != expectedN.at(i)) {
+            check(false, "rawPoints.size() != expected n");
+            break;
+        }
+    }
+    check(store.size() == frames.size(), "FrameStore dropped frames");
+    for (int i = 0; i < std::min<int>(store.size(), frames.size()); ++i) {
+        if (store.at(i).frameIndex != quint32(i)
+            || store.cursorFor(quint32(i)) != i) {
+            check(false, "FrameStore cursor/index mismatch");
+            break;
+        }
+    }
+
+    // 2. Record -> replay round trip preserves every wire word.
+    QTemporaryFile tmp(QDir::tempPath()
+                       + QStringLiteral("/radar2d_pipe_XXXXXX.jsonl"));
+    tmp.setAutoRemove(true);
+    if (!tmp.open()) {
+        std::fprintf(stderr, "pipe selftest: cannot create temp file\n");
+        return 2;
+    }
+    const QString recPath = tmp.fileName();
+    tmp.close();
+
+    FrameRecorder rec;
+    if (!rec.open(recPath, meta, &err)) {
+        std::fprintf(stderr, "pipe selftest: record open: %s\n",
+                     qPrintable(err));
+        return 2;
+    }
+    for (const SideFrame &fr : frames) {
+        rec.write(fr);
+    }
+    rec.close();
+    check(rec.frameCount() == frames.size(), "recorder skipped frames");
+
+    ReplaySource replay(meta);
+    if (!replay.load(recPath, &err)) {
+        std::fprintf(stderr, "pipe selftest: replay load: %s\n",
+                     qPrintable(err));
+        return 2;
+    }
+    check(replay.frameCount() == frames.size(), "replay frame count mismatch");
+    check(replay.fileMeta().minAmp == meta.minAmp, "meta minAmp lost");
+    auto sameRaw = [](const RawPoint &a, const RawPoint &b) {
+        return a.azRaw == b.azRaw && a.elRaw == b.elRaw && a.rRaw == b.rRaw
+            && a.c3 == b.c3 && a.c4 == b.c4 && a.c5Us == b.c5Us;
+    };
+    for (int i = 0; i < std::min<int>(replay.frameCount(), frames.size()); ++i) {
+        const SideFrame &a = frames.at(i);
+        const SideFrame &b = replay.frames().at(i);
+        if (a.rawPoints.size() != b.rawPoints.size()
+            || a.points.size() != b.points.size()
+            || a.frameToken != b.frameToken
+            || a.recvMonoUs != b.recvMonoUs
+            || a.dtMs != b.dtMs) {
+            check(false, "round-trip frame header / point count mismatch");
+            break;
+        }
+        bool rawOk = true;
+        for (int k = 0; k < a.rawPoints.size(); ++k) {
+            if (!sameRaw(a.rawPoints.at(k), b.rawPoints.at(k))) {
+                rawOk = false;
+                break;
+            }
+        }
+        if (!rawOk) {
+            check(false, "round-trip raw wire words mismatch");
+            break;
+        }
+    }
+
+    // 3. Lowering the threshold on replay must never lose displayed points.
+    FrameMeta loose = meta;
+    loose.minAmp = 0;
+    ReplaySource replay2(loose);
+    if (!replay2.load(recPath, &err)) {
+        check(false, "threshold re-projection load failed");
+    } else {
+        for (int i = 0; i < replay2.frameCount(); ++i) {
+            if (replay2.frames().at(i).points.size()
+                < replay.frames().at(i).points.size()) {
+                check(false, "minAmp=0 replay lost points");
+                break;
+            }
+        }
+    }
+
+    // 4. A truncated JSONL must be rejected, not silently partially loaded.
+    {
+        QFile src(recPath);
+        if (!src.open(QIODevice::ReadOnly)) {
+            check(false, "cannot reopen recording for truncation test");
+        } else {
+            const QByteArray all = src.readAll();
+            QTemporaryFile trunc(QDir::tempPath()
+                                 + QStringLiteral("/radar2d_trunc_XXXXXX.jsonl"));
+            trunc.setAutoRemove(true);
+            if (!trunc.open()) {
+                check(false, "cannot create truncated temp file");
+            } else {
+                trunc.write(all.left(std::max<qsizetype>(0, all.size() - 5)));
+                const QString truncPath = trunc.fileName();
+                trunc.close();
+                ReplaySource bad(meta);
+                if (bad.load(truncPath, &err)) {
+                    check(false, "truncated JSONL was accepted");
+                }
+            }
+        }
+    }
+
+    // 5. Ring-buffer rollover keeps the newest frames and re-anchors cursors.
+    {
+        FrameStore small(10);
+        for (const SideFrame &fr : frames) {
+            small.append(fr);
+        }
+        check(small.size() == 10, "ring buffer did not cap at maxFrames");
+        check(small.firstIndex() == quint32(frames.size() - 10),
+              "ring buffer firstIndex after rollover");
+        check(small.cursorFor(quint32(frames.size() - 10)) == 0
+                  && small.cursorFor(quint32(frames.size() - 1)) == 9
+                  && small.cursorFor(0) == -1,
+              "ring buffer cursorFor after rollover");
+    }
+
+    // 6. Transport controls: pause / seek / step / speed / play.
+    {
+        replay.pause();
+        check(!replay.playing(), "pause did not clear playing");
+        replay.seek(5);
+        check(replay.cursor() == 5, "seek did not move cursor");
+        replay.step(2);
+        check(replay.cursor() == 7 && !replay.playing(),
+              "step did not advance exactly two frames");
+        replay.setSpeed(2.0);
+        check(replay.speed() == 2.0, "setSpeed did not apply");
+        replay.play();
+        check(replay.playing(), "play did not start");
+        replay.pause();
+    }
+
+    std::printf("pipe selftest: %d frames, %d failures\n", frames.size(),
+                failed);
+    return (frames.size() >= 10 && failed == 0) ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName("radar2d");
     const Config cfg = parseConfig(app);
 
     if (!cfg.selftest.isEmpty()) {
+        if (cfg.selftest.startsWith(QLatin1String("pipe:"))) {
+            return runPipeSelftest(cfg.selftest);
+        }
         return runSelftest(cfg.selftest);
     }
     if (cfg.dump) {
@@ -187,5 +467,8 @@ int main(int argc, char **argv) {
 
     MainWindow w(cfg);
     w.show();
+    if (cfg.autoExitMs > 0) {
+        QTimer::singleShot(cfg.autoExitMs, &app, &QCoreApplication::quit);
+    }
     return app.exec();
 }

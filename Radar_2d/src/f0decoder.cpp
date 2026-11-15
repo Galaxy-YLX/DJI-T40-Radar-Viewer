@@ -60,18 +60,29 @@ F0Frame decode(const uint8_t *data, int len) {
            && (body[18] == uint8_t(sumHdr & 0xFF));
     f.seq = u16(body + 3);
     f.n = n;
+    f.raw.resize(n);
     f.az.resize(n);
     f.el.resize(n);
     f.r.resize(n);
     f.c3.resize(n);
+    f.c4.resize(n);
     f.c5.resize(n);
     for (int k = 0; k < n; ++k) {
         const uint8_t *e = raw + k * kRec12;
-        f.az[k] = u16(e) / 1000.0f;
-        f.el[k] = u16(e + 2) / 1000.0f - kTwoPi;
-        f.r[k] = u16(e + 4) / 1000.0f;
-        f.c3[k] = float(u16(e + 6));
-        f.c5[k] = float(u16(e + 10));
+        RawPoint rp;
+        rp.azRaw = u16(e);
+        rp.elRaw = u16(e + 2);
+        rp.rRaw = u16(e + 4);
+        rp.c3 = u16(e + 6);
+        rp.c4 = u16(e + 8);
+        rp.c5Us = u16(e + 10);
+        f.raw[k] = rp;
+        f.az[k] = rp.azRaw / 1000.0f;
+        f.el[k] = rp.elRaw / 1000.0f - kTwoPi;
+        f.r[k] = rp.rRaw / 1000.0f;
+        f.c3[k] = float(rp.c3);
+        f.c4[k] = float(rp.c4);
+        f.c5[k] = float(rp.c5Us);
     }
     return f;
 }
@@ -132,6 +143,51 @@ double rpmFromC5(const F0Frame &f) {
     return 60e6 / (num / den * 6283.19);
 }
 
+void projectRaw(const QVector<RawPoint> &raw, SideFrame &fr,
+                float offsetDeg, int minAmp, float minRangeM) {
+    fr.points.clear();
+    fr.points.reserve(raw.size());
+    for (const RawPoint &rp : raw) {
+        const float amp = float(rp.c3);
+        if (amp < float(minAmp)) {
+            continue;
+        }
+        const float azRad = rp.azRaw / 1000.0f;
+        const float elRad = rp.elRaw / 1000.0f - kTwoPi;
+        // points_xy(): the horizontal range is r*cos(el), azimuth stays
+        // clockwise with 0 degrees at the top, matching the PPI convention.
+        const float range = float((rp.rRaw / 1000.0f) * std::cos(elRad));
+        if (!std::isfinite(range) || range < minRangeM) {
+            continue;
+        }
+        // 0x00F0's c0 is the rotating head angle: its zero sits at the centre
+        // of the no-data sector, 180 deg off physical forward (cross-check
+        // against 1E61 xyz: best offset = az + pi). Rotate it so the returns
+        // land in the PPI's +/-120 deg forward view.
+        float azDeg = float(std::fmod(double(azRad) * kRadToDeg
+                                      + 180.0 + double(offsetDeg), 360.0));
+        if (azDeg < 0.0f) {
+            azDeg += 360.0f;
+        }
+        if (azDeg > kBlindStartDeg && azDeg < kBlindEndDeg) {
+            continue;   // rear no-data sector, outside the display range
+        }
+        SectorPoint p;
+        p.azimuthDeg = azDeg;
+        p.elevationDeg = float(elRad * kRadToDeg);
+        p.rangeM = range;
+        // The Python view grades c3 by (c3 - threshold)/300 into 16 levels;
+        // map the same window onto the PPI's 0..255 brightness scale.
+        p.snr = std::clamp((amp - float(minAmp)) * (255.0f / 300.0f),
+                           0.0f, 255.0f);
+        p.amp = amp;
+        p.c4 = float(rp.c4);
+        p.c5Us = rp.c5Us;
+        p.azRaw = rp.azRaw;
+        fr.points.push_back(p);
+    }
+}
+
 SideFrame toSideFrame(const F0Frame &f, float offsetDeg,
                       int minAmp, float minRangeM) {
     SideFrame fr;
@@ -143,41 +199,8 @@ SideFrame toSideFrame(const F0Frame &f, float offsetDeg,
     fr.frameToken = uint32_t(f.seq);
     fr.sumOk = f.sumOk;
     fr.rpm = rpmFromC5(f);
-    fr.points.reserve(f.n);
-
-    for (int k = 0; k < f.n; ++k) {
-        const float amp = f.c3[k];
-        if (amp < float(minAmp)) {
-            continue;
-        }
-        // points_xy(): the horizontal range is r*cos(el), azimuth stays
-        // clockwise with 0 degrees at the top, matching the PPI convention.
-        const float range = float(f.r[k] * std::cos(f.el[k]));
-        if (!std::isfinite(range) || range < minRangeM) {
-            continue;
-        }
-        // 0x00F0's c0 is the rotating head angle: its zero sits at the centre
-        // of the no-data sector, 180 deg off physical forward (cross-check
-        // against 1E61 xyz: best offset = az + pi). Rotate it so the returns
-        // land in the PPI's +/-120 deg forward view.
-        float azDeg = float(std::fmod(double(f.az[k]) * kRadToDeg
-                                      + 180.0 + double(offsetDeg), 360.0));
-        if (azDeg < 0.0f) {
-            azDeg += 360.0f;
-        }
-        if (azDeg > kBlindStartDeg && azDeg < kBlindEndDeg) {
-            continue;   // rear no-data sector, outside the display range
-        }
-        SectorPoint p;
-        p.azimuthDeg = azDeg;
-        p.elevationDeg = float(f.el[k] * kRadToDeg);
-        p.rangeM = range;
-        // The Python view grades c3 by (c3 - threshold)/300 into 16 levels;
-        // map the same window onto the PPI's 0..255 brightness scale.
-        p.snr = std::clamp((amp - float(minAmp)) * (255.0f / 300.0f),
-                           0.0f, 255.0f);
-        fr.points.push_back(p);
-    }
+    fr.rawPoints = f.raw;
+    projectRaw(f.raw, fr, offsetDeg, minAmp, minRangeM);
     return fr;
 }
 

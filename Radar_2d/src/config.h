@@ -18,4 +18,9 @@ struct Config {
     bool demo = false;              // synthetic points, no hardware
     bool dump = false;              // decode one frame as text and exit
     QString selftest;               // "frames.bin:expected.txt" decoder check
+    QString recordPath;             // JSONL frame recorder output
+    QString replayPath;             // replay a JSONL instead of UDP
+    double speed = 1.0;             // replay speed multiplier
+    bool loop = false;              // loop at end of replay file
+    int autoExitMs = 0;             // quit after N ms (offscreen regression)
 };

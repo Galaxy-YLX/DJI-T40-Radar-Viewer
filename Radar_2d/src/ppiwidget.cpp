@@ -259,7 +259,7 @@ void PpiWidget::drawHud(QPainter &p) {
     p.setFont(mono);
     const qreal labelW =
         fm.horizontalAdvance(QString::fromUtf8("丢包率    "));
-    constexpr int kRowCount = 8;
+    constexpr int kRowCount = 12;
     auto cell = [&](int row, const char *label, const QString &value) {
         const qreal y = bodyTop + 6.0 + fm.ascent() + row * rowH;
         p.setPen(kScale);
@@ -273,19 +273,24 @@ void PpiWidget::drawHud(QPainter &p) {
         + ((h.live && h.blips == 0) ? "!" : "");
 
     cell(0, "帧率", QString::number(h.fps, 'f', 1) + " Hz");
-    cell(1, "帧序号", QString::number(h.token));
-    cell(2, "源", h.source);
-    cell(3, "回波", blips);
-    cell(4, "量程", QString::number(h.rangeM, 'f', 1) + "m");
-    cell(5, "点径", QString::number(h.pointRadius, 'f', 1));
+    cell(1, "线序号", QString::number(h.token));
+    cell(2, "帧号", QString::number(h.frameIndex));
+    cell(3, "间隔", QString::number(h.dtMs, 'f', 1) + "ms");
+    cell(4, "源", h.source);
+    cell(5, "回波", blips);
+    cell(6, "量程", QString::number(h.rangeM, 'f', 1) + "m");
+    cell(7, "点径", QString::number(h.pointRadius, 'f', 1));
 
     // Packet loss: flagged with '!' once it climbs above a healthy threshold.
     const QString loss = QString::number(h.packetLossPct, 'f', 1) + "%"
         + (h.packetLossPct > 2.0 ? "!" : "");
-    cell(6, "丢包率", loss);
-    cell(7, "转速", h.rpm > 0.0
+    cell(8, "丢包率", loss);
+    cell(9, "转速", h.rpm > 0.0
          ? QString::number(int(h.rpm + 0.5)) + "rpm"
          : QString::fromUtf8("—"));
+    cell(10, "缓冲", QString::number(h.buffered) + " 帧");
+    cell(11, "模式", h.mode
+         + (h.recording ? QString::fromUtf8(" · 录") : QString()));
 
     p.setFont(small);
     p.setPen(kPhosphorDim);
@@ -293,6 +298,8 @@ void PpiWidget::drawHud(QPainter &p) {
     const qreal hintRowH = p.fontMetrics().height() + 2.0;
     p.drawText(QPointF(left, hintY), "i / o 键  量程±5m");
     p.drawText(QPointF(left, hintY + hintRowH), "[ ]  点大小");
+    p.drawText(QPointF(left, hintY + 2 * hintRowH),
+               "空格 暂停/播放   , . 单步");
     p.restore();
 }
 
