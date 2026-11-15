@@ -239,7 +239,9 @@ void FlatView::drawLegend(QPainter &p, const QRectF &plot) const {
 
     const double infoX = barX + barW + 18.0;
     p.setPen(kTextDim);
-    p.drawText(QPointF(infoX, barY + 20.0),
+    // Share the colour scale's row, vertically centred against the bar.
+    p.drawText(QRectF(infoX, barY, 260.0, barH),
+               Qt::AlignLeft | Qt::AlignVCenter,
                QString::fromUtf8("点数 %1   俯仰越界 %2")
                    .arg(mShown).arg(mOutOfFov));
 }

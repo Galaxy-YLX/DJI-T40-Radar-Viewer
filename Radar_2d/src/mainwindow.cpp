@@ -26,8 +26,6 @@ constexpr int kRangeStepM = 5;
 constexpr int kFpsWindowMs = 2000;  // sliding window for the instant frame rate
 constexpr int kFpsStaleMs = 500;    // no frame this long -> 0 Hz
 constexpr int kHudRefreshMs = 200;  // status text refresh, decoupled from frames
-constexpr int kPowerButtonWidth = 160;
-constexpr int kPowerButtonHeight = 72;
 
 constexpr const char *kToolBarStyle =
     "QToolBar { background: #000000; border: none;"
@@ -40,10 +38,9 @@ constexpr const char *kToolBarStyle =
     "QToolBar QPushButton:pressed { background-color: #0b3d20; }"
     "QToolBar QPushButton:disabled { color: #0b5c2c;"
     " border-color: #062d16; }"
-    // QToolBar sizes added widgets from their size hint, so the power
-    // buttons need explicit minimums in the stylesheet as well.
-    "QPushButton#powerButton { font-size: 26px;"
-    " min-width: 160px; min-height: 72px; }";
+    // Power buttons: half a font size of side padding (13px), with a
+    // tighter vertical pad so the toolbar row stays compact.
+    "QPushButton#powerButton { font-size: 18px; padding: 1px 12px; }";
 }
 
 MainWindow::MainWindow(const Config &cfg, QWidget *parent)
@@ -51,8 +48,7 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     setWindowTitle("DJI AESA Digital Radar");
     // Side by side: give the PPI enough width that its HUD card does not
     // collide with the azimuth ring, and keep the unrolled view wide.
-    // The extra height offsets the taller power-button row.
-    resize(1500, 820);
+    resize(1500, 780);
 
     mPpi = new PpiWidget(this);
     mPpi->setPointRadius(cfg.pointRadius);
@@ -90,14 +86,12 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     auto *powerBar = makeBar("电源");
     mPowerOn = new QPushButton("开机", powerBar);
     mPowerOn->setObjectName("powerButton");
-    mPowerOn->setFixedSize(kPowerButtonWidth, kPowerButtonHeight);
     mPowerOn->setFocusPolicy(Qt::NoFocus);
     mPowerOn->setToolTip("启动 FC 保活与 CAN 电机，使雷达进入工作状态");
     powerBar->addWidget(mPowerOn);
 
     mPowerOff = new QPushButton("关机", powerBar);
     mPowerOff->setObjectName("powerButton");
-    mPowerOff->setFixedSize(kPowerButtonWidth, kPowerButtonHeight);
     mPowerOff->setFocusPolicy(Qt::NoFocus);
     mPowerOff->setToolTip("停止 FC 保活并发送停电机命令");
     powerBar->addWidget(mPowerOff);
