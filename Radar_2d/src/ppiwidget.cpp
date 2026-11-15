@@ -219,7 +219,6 @@ void PpiWidget::paintEvent(QPaintEvent *) {
 
 void PpiWidget::drawHud(QPainter &p) {
     const HudState &h = mHud;
-    const bool streaming = h.live && h.fps > 0.0;
 
     QFont mono;
     mono.setFamilies({"Noto Sans Mono CJK SC", "Droid Sans Fallback",
@@ -243,11 +242,9 @@ void PpiWidget::drawHud(QPainter &p) {
 
     // Status is the first line of the card, left-aligned below the range bar.
     // Frame rate has its own row.
-    const QString status =
-        (h.live && !h.sumOk) ? QString::fromUtf8("当前状态：校验!")
-        : !h.live ? QString::fromUtf8("当前状态：等待")
-        : (streaming ? QString::fromUtf8("当前状态：实时")
-                     : QString::fromUtf8("当前状态：停滞"));
+    const QString status = h.working
+        ? QString::fromUtf8("当前状态：工作中")
+        : QString::fromUtf8("当前状态：未工作");
 
     const qreal statusY = top + fm.ascent();
     p.setPen(kPhosphor);

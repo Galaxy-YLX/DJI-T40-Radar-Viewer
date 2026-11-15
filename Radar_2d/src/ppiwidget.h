@@ -30,7 +30,8 @@ struct HudState {
     double dtMs = 0.0;      // measured inter-frame interval
     int buffered = 0;       // frames held in the ring buffer
     bool recording = false; // JSONL recorder active
-    QString mode;           // 实时 / 暂停 / 回放
+    QString mode;           // 实时 / 回放
+    bool working = false;   // a frame arrived within the stale window
 
     bool operator==(const HudState &o) const {
         return live == o.live && demo == o.demo && fps == o.fps &&
@@ -41,7 +42,7 @@ struct HudState {
                sumOk == o.sumOk && rpm == o.rpm &&
                frameIndex == o.frameIndex && dtMs == o.dtMs &&
                buffered == o.buffered && recording == o.recording &&
-               mode == o.mode;
+               mode == o.mode && working == o.working;
     }
     bool operator!=(const HudState &o) const { return !(*this == o); }
 };

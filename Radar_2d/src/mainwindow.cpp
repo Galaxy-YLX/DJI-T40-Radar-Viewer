@@ -384,6 +384,11 @@ void MainWindow::refreshHud() {
         }
     }
     mHud.live = mFrames > 0;
+    // Two-state status: a frame within the stale window means the viewer is
+    // working, otherwise it is idle. Independent of the FPS estimate so a
+    // very low frame rate does not flicker the status.
+    mHud.working = !mFrameTimes.empty()
+                   && now - mFrameTimes.back() <= kFpsStaleMs;
     mHud.demo = mDemoMode;
     mHud.fps = std::round(fps * 10.0) / 10.0;
     mHud.frames = mFrames;
