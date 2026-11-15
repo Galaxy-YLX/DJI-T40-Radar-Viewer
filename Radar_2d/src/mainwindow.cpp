@@ -26,8 +26,8 @@ constexpr int kRangeStepM = 5;
 constexpr int kFpsWindowMs = 2000;  // sliding window for the instant frame rate
 constexpr int kFpsStaleMs = 500;    // no frame this long -> 0 Hz
 constexpr int kHudRefreshMs = 200;  // status text refresh, decoupled from frames
-constexpr int kPowerButtonWidth = 120;
-constexpr int kPowerButtonHeight = 52;
+constexpr int kPowerButtonWidth = 160;
+constexpr int kPowerButtonHeight = 72;
 
 constexpr const char *kToolBarStyle =
     "QToolBar { background: #000000; border: none;"
@@ -40,7 +40,10 @@ constexpr const char *kToolBarStyle =
     "QToolBar QPushButton:pressed { background-color: #0b3d20; }"
     "QToolBar QPushButton:disabled { color: #0b5c2c;"
     " border-color: #062d16; }"
-    "QPushButton#powerButton { font-size: 20px; }";
+    // QToolBar sizes added widgets from their size hint, so the power
+    // buttons need explicit minimums in the stylesheet as well.
+    "QPushButton#powerButton { font-size: 26px;"
+    " min-width: 160px; min-height: 72px; }";
 }
 
 MainWindow::MainWindow(const Config &cfg, QWidget *parent)
@@ -48,7 +51,8 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     setWindowTitle("DJI AESA Digital Radar");
     // Side by side: give the PPI enough width that its HUD card does not
     // collide with the azimuth ring, and keep the unrolled view wide.
-    resize(1500, 780);
+    // The extra height offsets the taller power-button row.
+    resize(1500, 820);
 
     mPpi = new PpiWidget(this);
     mPpi->setPointRadius(cfg.pointRadius);
