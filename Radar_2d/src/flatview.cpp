@@ -20,7 +20,7 @@ constexpr int kBins = 12;              // discrete distance colour steps
 constexpr double kLeft = 58.0;
 constexpr double kRight = 26.0;    // room for the rightmost "120" label
 constexpr double kTop = 46.0;
-constexpr double kBottom = 90.0;   // caption + colour bar + distance ticks
+constexpr double kBottom = 90.0;   // colour bar + distance ticks
 
 // Black phosphor canvas, matching the PPI. The colour scale ends at green,
 // so even the farthest points stay visible.
@@ -211,10 +211,6 @@ void FlatView::drawLegend(QPainter &p, const QRectF &plot) const {
     QFont small = font();
     small.setPointSizeF(7.5);
     p.setFont(small);
-    p.setPen(kTextDim);
-    p.drawText(QPointF(plot.left(), plot.bottom() + 16.0),
-               QString::fromUtf8("方位 × 俯仰 平铺   |   横轴 方位角(°) 000=正前"
-                                 "   |   纵轴 俯仰角(°) +45 → −45"));
 
     const double barW = std::min(320.0, plot.width() * 0.62);
     constexpr double barH = 12.0;
@@ -243,8 +239,6 @@ void FlatView::drawLegend(QPainter &p, const QRectF &plot) const {
 
     const double infoX = barX + barW + 18.0;
     p.setPen(kTextDim);
-    p.drawText(QPointF(infoX, barY + 3.0),
-               QString::fromUtf8("距离分度：红 近 → 黄 中 → 绿 远/超量程"));
     p.drawText(QPointF(infoX, barY + 20.0),
                QString::fromUtf8("点数 %1   俯仰越界 %2")
                    .arg(mShown).arg(mOutOfFov));
