@@ -10,7 +10,7 @@
 #   ./run.sh dump           decode one UDP frame as text and exit
 #   ./run.sh selftest       decoder + frame-pipeline / replay regression
 #   ./run.sh record x.jsonl live UDP + JSONL frame recording
-#   ./run.sh replay x.jsonl [speed]   JSONL replay with transport controls
+#   ./run.sh replay x.jsonl [--speed N] [--loop]   JSONL replay
 #
 # udp / dump automatically check and (re)configure the environment:
 #   - host owns 192.168.8.1  (AR1021x AP)  -> setup/start_ap.sh
@@ -114,7 +114,7 @@ case "$MODE" in
     "$BIN" --selftest "pipe:$V/frames.bin:$V/expected.txt"
     ;;
   replay)
-    [ "$#" -ge 2 ] || { echo "usage: $0 replay <file.jsonl> [speed] [args...]" >&2; exit 1; }
+    [ "$#" -ge 2 ] || { echo "usage: $0 replay <file.jsonl> [--speed N] [--loop]" >&2; exit 1; }
     FILE="$2"
     shift 2
     exec "$BIN" --replay "$FILE" "${COMMON_ARGS[@]}" "$@"
@@ -145,7 +145,7 @@ case "$MODE" in
     "$BIN" "${UDP_ARGS[@]}" "${COMMON_ARGS[@]}"
     ;;
   *)
-    echo "usage: $0 [udp|demo|dump|selftest|record <file>|replay <file> [speed]]" >&2
+    echo "usage: $0 [udp|demo|dump|selftest|record <file>|replay <file> [--speed N]]" >&2
     exit 1
     ;;
 esac

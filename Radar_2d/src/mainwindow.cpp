@@ -1,17 +1,12 @@
 #include "mainwindow.h"
 
-#include <QComboBox>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
-#include <QKeySequence>
 #include <QLabel>
 #include <QPalette>
 #include <QProcess>
 #include <QPushButton>
-#include <QShortcut>
-#include <QSignalBlocker>
-#include <QSlider>
 #include <QSplitter>
 #include <QTimer>
 #include <QToolBar>
@@ -50,14 +45,6 @@ constexpr const char *kToolBarStyle =
     " border-color: #062d16; }"
     // The +/- range buttons keep their original compact 14px design.
     "QPushButton#rangeButton { font-size: 14px; padding: 0px; }";
-
-constexpr const char *kTransportStyle =
-    "QSlider { background: #000000; }"
-    "QSlider::groove:horizontal { height: 4px; background: #0b5c2c; }"
-    "QSlider::handle:horizontal { background: #00ff66; width: 12px;"
-    " margin: -5px 0; }"
-    "QComboBox { background: #000000; color: #00ff66;"
-    " border: 1px solid #0b5c2c; padding: 1px 6px; font-size: 14px; }";
 }
 
 MainWindow::MainWindow(const Config &cfg, QWidget *parent)
@@ -171,75 +158,8 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     viewBar->addWidget(viewToggle);
     connect(viewToggle, &QPushButton::toggled, mFlat, &QWidget::setVisible);
 
-    // Frame transport: pause / step / seek / speed / record / back to live.
-    addToolBarBreak(Qt::TopToolBarArea);
-    auto *transportBar = makeBar("帧序列");
-    transportBar->setStyleSheet(transportBar->styleSheet()
-                                + QString::fromUtf8(kTransportStyle));
-    mPlayPause = new QPushButton("暂停", transportBar);
-    mPlayPause->setFocusPolicy(Qt::NoFocus);
-    mPlayPause->setToolTip("暂停 / 继续（空格）");
-    transportBar->addWidget(mPlayPause);
-    mStepBack = new QPushButton("◀", transportBar);
-    mStepBack->setFocusPolicy(Qt::NoFocus);
-    mStepBack->setToolTip("上一帧（, 键）");
-    transportBar->addWidget(mStepBack);
-    mStepFwd = new QPushButton("▶", transportBar);
-    mStepFwd->setFocusPolicy(Qt::NoFocus);
-    mStepFwd->setToolTip("下一帧（. 键）");
-    transportBar->addWidget(mStepFwd);
-    mSeek = new QSlider(Qt::Horizontal, transportBar);
-    mSeek->setMinimumWidth(280);
-    mSeek->setRange(0, 0);
-    transportBar->addWidget(mSeek);
-    mFrameLabel = new QLabel("0 / 0", transportBar);
-    mFrameLabel->setMinimumWidth(170);
-    mFrameLabel->setStyleSheet("font-size: 13px;");
-    transportBar->addWidget(mFrameLabel);
-    mSpeedBox = new QComboBox(transportBar);
-    mSpeedBox->addItems({"0.25×", "0.5×", "1×", "2×", "4×"});
-    mSpeedBox->setCurrentIndex(2);
-    mSpeedBox->setToolTip("回放倍速");
-    transportBar->addWidget(mSpeedBox);
-    mRecordBtn = new QPushButton("录制", transportBar);
-    mRecordBtn->setCheckable(true);
-    mRecordBtn->setFocusPolicy(Qt::NoFocus);
-    mRecordBtn->setToolTip("把逐帧原始点录成 JSONL");
-    transportBar->addWidget(mRecordBtn);
-    mLiveBtn = new QPushButton("回到直播", transportBar);
-    mLiveBtn->setFocusPolicy(Qt::NoFocus);
-    mLiveBtn->setToolTip("退出回放 / 继续跟随最新帧");
-    transportBar->addWidget(mLiveBtn);
-
-    connect(mPlayPause, &QPushButton::clicked, this, &MainWindow::togglePause);
-    connect(mStepBack, &QPushButton::clicked, this,
-            [this] { stepFrame(-1); });
-    connect(mStepFwd, &QPushButton::clicked, this,
-            [this] { stepFrame(1); });
-    connect(mSeek, &QSlider::valueChanged, this, [this](int v) {
-        if (!mUpdatingSeek) {
-            seekTo(v);
-        }
-    });
-    connect(mSpeedBox, &QComboBox::currentTextChanged, this,
-            [this](const QString &t) {
-        if (mReplay) {
-            mReplay->setSpeed(t.left(t.size() - 1).toDouble());
-        }
-    });
-    connect(mRecordBtn, &QPushButton::toggled, this,
-            &MainWindow::toggleRecording);
-    connect(mLiveBtn, &QPushButton::clicked, this, &MainWindow::backToLive);
-
-    auto *pauseShortcut = new QShortcut(QKeySequence(Qt::Key_Space), this);
-    connect(pauseShortcut, &QShortcut::activated, this,
-            &MainWindow::togglePause);
-    auto *backShortcut = new QShortcut(QKeySequence(Qt::Key_Comma), this);
-    connect(backShortcut, &QShortcut::activated, this,
-            [this] { stepFrame(-1); });
-    auto *fwdShortcut = new QShortcut(QKeySequence(Qt::Key_Period), this);
-    connect(fwdShortcut, &QShortcut::activated, this,
-            [this] { stepFrame(1); });
+    // Recording and replay have no toolbar row; they are driven purely by
+    // --record / --replay / --speed / --loop on the command line.
 
     auto *central = new QWidget(this);
     central->setPalette(blackPal);
@@ -314,23 +234,14 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
             std::fprintf(stderr,
                          "[record] ignored: --replay and --record are exclusive\n");
         } else {
-            mRecordBtn->setChecked(true);   // triggers toggleRecording()
+            startRecording();
         }
     }
     if (mReplay) {
-        const QString label = QString::number(cfg.speed, 'g', 3)
-                              + QStringLiteral("×");
-        int idx = mSpeedBox->findText(label);
-        if (idx < 0) {
-            mSpeedBox->addItem(label);
-            idx = mSpeedBox->count() - 1;
-        }
-        mSpeedBox->setCurrentIndex(idx);
         mReplay->setLoop(cfg.loop);
         mReplay->setSpeed(cfg.speed);
         mReplay->play();
     }
-    updateTransport();
 }
 
 MainWindow::~MainWindow() {
@@ -378,8 +289,6 @@ void MainWindow::setupReplay() {
     mMeta.source = QStringLiteral("replay");
     connect(mReplay, &ReplaySource::frameReady, this,
             &MainWindow::onReplayFrame);
-    connect(mReplay, &ReplaySource::stateChanged, this,
-            &MainWindow::onReplayState);
 }
 
 void MainWindow::startRadar() {
@@ -419,8 +328,8 @@ void MainWindow::syncRangeDisplay(double m) {
     mRangePlus->setEnabled(m < kRangeMaxM - 0.05);
 }
 
-// Single display entry point: live UDP, paused ring buffer and file replay
-// all reach PPI + unrolled view through here, with identical frame objects.
+// Single display entry point: live UDP and file replay both reach the PPI
+// and the unrolled view through here, with identical frame objects.
 void MainWindow::applyFrame(const SideFrame &fr) {
     mHud.token = int(fr.frameToken);
     mHud.entries = int(fr.entryCount);
@@ -439,7 +348,7 @@ void MainWindow::applyFrame(const SideFrame &fr) {
 }
 
 void MainWindow::onFrameReady(const SideFrame &fr) {
-    // Data ingestion is never throttled or overwritten, even while paused.
+    // Every decoded frame is buffered and recorded; none is dropped.
     mStore.append(fr);
     if (mRecording) {
         mRecorder.write(fr);
@@ -449,14 +358,7 @@ void MainWindow::onFrameReady(const SideFrame &fr) {
     if (mState == PlayState::Live) {
         mCursor = mStore.size() - 1;
         applyFrame(fr);
-    } else if (mState == PlayState::Paused) {
-        // Re-anchor the frozen cursor if the ring buffer rolled over.
-        const int c = mStore.cursorFor(mCursorFrameIndex);
-        if (c >= 0) {
-            mCursor = c;
-        }
     }
-    updateTransport();
 }
 
 void MainWindow::onReplayFrame(const SideFrame &fr) {
@@ -466,18 +368,6 @@ void MainWindow::onReplayFrame(const SideFrame &fr) {
     ++mFrames;
     mFrameTimes.push_back(mClock.elapsed());
     applyFrame(fr);
-    updateTransport();
-}
-
-void MainWindow::onReplayState() { updateTransport(); }
-
-void MainWindow::showStored(int cursor) {
-    if (mStore.empty()) {
-        return;
-    }
-    mCursor = std::clamp(cursor, 0, mStore.size() - 1);
-    applyFrame(mStore.at(mCursor));
-    updateTransport();
 }
 
 void MainWindow::refreshHud() {
@@ -502,125 +392,32 @@ void MainWindow::refreshHud() {
     mHud.recording = mRecording;
     mHud.buffered = mStore.size();
     mHud.mode = mState == PlayState::Live ? QStringLiteral("实时")
-                : mState == PlayState::Paused ? QStringLiteral("暂停")
-                                              : QStringLiteral("回放");
+                                          : QStringLiteral("回放");
     mFlat->setPointRadius(std::max(2.0, mPpi->pointRadius() * 3.0));
     mPpi->setHud(mHud);
 }
 
-void MainWindow::updateTransport() {
-    const bool replay = (mState == PlayState::Replay && mReplay);
-    const int total = replay ? mReplay->frameCount() : mStore.size();
-    const int last = std::max(0, total - 1);
-    const int cur = replay ? mReplay->cursor() : mCursor;
-    const bool playing = replay ? mReplay->playing()
-                                : (mState == PlayState::Live);
-    mPlayPause->setText(playing ? QStringLiteral("暂停")
-                                : QStringLiteral("播放"));
-    mStepBack->setEnabled(total > 0);
-    mStepFwd->setEnabled(total > 0);
-    mRecordBtn->setEnabled(!replay);
-    mLiveBtn->setEnabled(replay || mState != PlayState::Live);
-    mUpdatingSeek = true;
-    mSeek->setRange(0, last);
-    mSeek->setValue(std::clamp(cur, 0, last));
-    mUpdatingSeek = false;
-    mFrameLabel->setText(QStringLiteral("%1 / %2  #%3  dt %4ms")
-                             .arg(total > 0 ? std::clamp(cur, 0, last) + 1 : 0)
-                             .arg(total)
-                             .arg(mHud.frameIndex)
-                             .arg(mHud.dtMs, 0, 'f', 1));
-}
-
-void MainWindow::togglePause() {
-    if (mState == PlayState::Replay) {
-        if (mReplay) {
-            if (mReplay->playing()) {
-                mReplay->pause();
-            } else {
-                mReplay->play();
-            }
-        }
-    } else if (mState == PlayState::Live) {
-        mState = PlayState::Paused;
-    } else {
-        mState = PlayState::Live;
-        if (!mStore.empty()) {
-            mCursor = mStore.size() - 1;
-            applyFrame(mStore.back());
-        }
-    }
-    updateTransport();
-}
-
-void MainWindow::stepFrame(int delta) {
-    if (mState == PlayState::Replay) {
-        if (mReplay) {
-            mReplay->step(delta);
-        }
-    } else {
-        mState = PlayState::Paused;
-        showStored(mCursor + delta);
-    }
-    updateTransport();
-}
-
-void MainWindow::seekTo(int cursor) {
-    if (mState == PlayState::Replay) {
-        if (mReplay) {
-            mReplay->seek(cursor);
-        }
-    } else {
-        mState = PlayState::Paused;
-        showStored(cursor);
-    }
-    updateTransport();
-}
-
-void MainWindow::backToLive() {
-    if (mReplay) {
-        mReplay->pause();
-    }
-    startLiveSource();
-    mState = PlayState::Live;
-    if (!mStore.empty()) {
-        mCursor = mStore.size() - 1;
-        applyFrame(mStore.back());
-    }
-    updateTransport();
-}
-
-void MainWindow::toggleRecording() {
+void MainWindow::startRecording() {
     if (mRecording) {
-        const QString path = mRecorder.path();
-        const int count = mRecorder.frameCount();
-        mRecorder.close();
-        mRecording = false;
-        std::fprintf(stderr, "[record] closed %s (%d frames)\n",
-                     qPrintable(path), count);
-    } else {
-        QString path = mCfg.recordPath;
-        if (path.isEmpty()) {
-            path = QDir::current().filePath(
-                QStringLiteral("radar2d_")
-                + QDateTime::currentDateTime()
-                      .toString(QStringLiteral("yyyyMMdd_HHmmss"))
-                + QStringLiteral(".jsonl"));
-        }
-        QString err;
-        if (!mRecorder.open(path, mMeta, &err)) {
-            std::fprintf(stderr, "[record] %s\n", qPrintable(err));
-            const QSignalBlocker blocker(mRecordBtn);
-            mRecordBtn->setChecked(false);
-            updateTransport();
-            return;
-        }
-        mRecording = true;
-        std::fprintf(stderr,
-                     "[record] writing %s.part (renamed to %s on clean exit)\n",
-                     qPrintable(path), qPrintable(path));
+        return;
     }
-    updateTransport();
+    QString path = mCfg.recordPath;
+    if (path.isEmpty()) {
+        path = QDir::current().filePath(
+            QStringLiteral("radar2d_")
+            + QDateTime::currentDateTime()
+                  .toString(QStringLiteral("yyyyMMdd_HHmmss"))
+            + QStringLiteral(".jsonl"));
+    }
+    QString err;
+    if (!mRecorder.open(path, mMeta, &err)) {
+        std::fprintf(stderr, "[record] %s\n", qPrintable(err));
+        return;
+    }
+    mRecording = true;
+    std::fprintf(stderr,
+                 "[record] writing %s.part (renamed to %s on clean exit)\n",
+                 qPrintable(path), qPrintable(path));
 }
 
 void MainWindow::onDemoTick() {

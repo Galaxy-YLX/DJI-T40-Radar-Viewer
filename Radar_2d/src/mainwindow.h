@@ -16,8 +16,6 @@ class QTimer;
 class QLabel;
 class QProcess;
 class QPushButton;
-class QSlider;
-class QComboBox;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -26,26 +24,19 @@ public:
     ~MainWindow() override;
 
 private:
-    enum class PlayState { Live, Paused, Replay };
+    enum class PlayState { Live, Replay };
 
 private slots:
     void onFrameReady(const SideFrame &fr);
     void onReplayFrame(const SideFrame &fr);
-    void onReplayState();
     void onDemoTick();
     void refreshHud();
-    void togglePause();
-    void stepFrame(int delta);
-    void seekTo(int cursor);
-    void toggleRecording();
-    void backToLive();
 
 private:
     void applyFrame(const SideFrame &fr);
-    void showStored(int cursor);
-    void updateTransport();
     void startLiveSource();
     void setupReplay();
+    void startRecording();
     void syncRangeDisplay(double m);
     void startRadar();
     void stopRadar();
@@ -63,24 +54,15 @@ private:
     QPushButton *mRangeMinus = nullptr;
     QPushButton *mPowerOn = nullptr;
     QPushButton *mPowerOff = nullptr;
-    QPushButton *mPlayPause = nullptr;
-    QPushButton *mStepBack = nullptr;
-    QPushButton *mStepFwd = nullptr;
-    QPushButton *mRecordBtn = nullptr;
-    QPushButton *mLiveBtn = nullptr;
-    QSlider *mSeek = nullptr;
-    QComboBox *mSpeedBox = nullptr;
-    QLabel *mFrameLabel = nullptr;
 
     Config mCfg;
     FrameMeta mMeta;
     FrameStore mStore;
     FrameRecorder mRecorder;
     PlayState mState = PlayState::Live;
-    int mCursor = -1;                 // cursor into mStore (live/paused)
-    quint32 mCursorFrameIndex = 0;    // survives ring-buffer rollover
+    int mCursor = -1;                 // cursor into mStore (latest frame)
+    quint32 mCursorFrameIndex = 0;    // for the phase-1 detection store
     bool mRecording = false;
-    bool mUpdatingSeek = false;
 
     QString mRadarIp;
     QString mCanIface;

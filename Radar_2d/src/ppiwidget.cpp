@@ -298,8 +298,6 @@ void PpiWidget::drawHud(QPainter &p) {
     const qreal hintRowH = p.fontMetrics().height() + 2.0;
     p.drawText(QPointF(left, hintY), "i / o 键  量程±5m");
     p.drawText(QPointF(left, hintY + hintRowH), "[ ]  点大小");
-    p.drawText(QPointF(left, hintY + 2 * hintRowH),
-               "空格 暂停/播放   , . 单步");
     p.restore();
 }
 
