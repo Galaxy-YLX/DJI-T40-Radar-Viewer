@@ -69,6 +69,14 @@ void FlatView::setPointRadius(double px) {
     update();
 }
 
+void FlatView::setFlipLeftRight(bool flip) {
+    if (flip == mFlipLeftRight) {
+        return;
+    }
+    mFlipLeftRight = flip;
+    update();
+}
+
 QColor FlatView::rangeColor(double t) {
     t = std::clamp(t, 0.0, 1.0);
     const QColor red(226, 48, 42);
@@ -153,9 +161,15 @@ void FlatView::drawPoints(QPainter &p, const QRectF &plot) {
             ++mOutOfFov;   // outside the +/-45 deg elevation window
             continue;
         }
-        const double a = unrolledAz(pt.azimuthDeg);
+        double a = unrolledAz(pt.azimuthDeg);
         if (a < 0.0 || a > kAzSpanDeg) {
             continue;      // rear no-data sector
+        }
+        // The 240 -> 120 scale stays in place; mirror the blips alone when
+        // the PPI mirrors its returns, so a target lands on the same side
+        // of both views (about the centre 000 line).
+        if (mFlipLeftRight) {
+            a = kAzSpanDeg - a;
         }
         const double x = plot.left() + a / kAzSpanDeg * plot.width();
         const double y = plot.top()

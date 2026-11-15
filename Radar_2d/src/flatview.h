@@ -21,6 +21,7 @@ public:
     void setFrame(const SideFrame &fr);
     void setRangeLimit(double m);
     void setPointRadius(double px);
+    void setFlipLeftRight(bool flip);   // mirror blips only, keep the scale
     double rangeLimit() const { return mRangeLimit; }
 
 protected:
@@ -38,6 +39,7 @@ private:
     QVector<SectorPoint> mPoints;
     double mRangeLimit = 25.0;
     double mPointRadius = 2.2;
+    bool mFlipLeftRight = false;
     int mShown = 0;
     int mOutOfFov = 0;
 };

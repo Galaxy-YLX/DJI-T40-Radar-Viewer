@@ -83,6 +83,7 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mPpi->setPointRadius(cfg.pointRadius);
     mPpi->setFlipLeftRight(cfg.flipLeftRight);
     mFlat = new FlatView(this);
+    mFlat->setFlipLeftRight(cfg.flipLeftRight);
     mFlat->setRangeLimit(cfg.rangeM);
     mFlat->setPointRadius(std::max(2.0, cfg.pointRadius * 3.0));
     mDemoMode = cfg.demo;
