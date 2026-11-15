@@ -48,6 +48,12 @@ constexpr const char *kToolBarStyle =
 MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     : QMainWindow(parent), mOffsetDeg(cfg.offsetDeg) {
     setWindowTitle("DJI AESA Digital Radar");
+    // Toggling the flat view off briefly exposes its parents' background.
+    // Keep every parent surface black so that repaint never flashes white.
+    QPalette blackPal = palette();
+    blackPal.setColor(QPalette::Window, Qt::black);
+    setPalette(blackPal);
+    setAutoFillBackground(true);
     // Side by side: give the PPI enough width that its HUD card does not
     // collide with the azimuth ring, and keep the unrolled view wide.
     resize(1500, 780);
@@ -135,20 +141,29 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     viewToggle->setFocusPolicy(Qt::NoFocus);
     viewToggle->setToolTip(
         "显示/隐藏方位-俯仰平铺视图（横轴 240→120，纵轴 +45→−45）");
+    // Pin both states to black/dark-green: an unstyled unchecked state can
+    // repaint with the light default palette when the view is closed.
     viewToggle->setStyleSheet(
+        "QPushButton { background-color: #000000; }"
         "QPushButton:checked { background-color: #0b3d20;"
         " border-color: #00ff66; }");
     viewBar->addWidget(viewToggle);
     connect(viewToggle, &QPushButton::toggled, mFlat, &QWidget::setVisible);
 
     auto *central = new QWidget(this);
+    central->setPalette(blackPal);
+    central->setAutoFillBackground(true);
     auto *vbox = new QVBoxLayout(central);
     vbox->setContentsMargins(0, 0, 0, 0);
     vbox->setSpacing(0);
     auto *split = new QSplitter(Qt::Horizontal, central);
     split->setChildrenCollapsible(false);
-    // Dark handle: the default light one is glaring between two black views.
+    split->setPalette(blackPal);
+    split->setAutoFillBackground(true);
+    // Dark body + handle: while the flat view is being hidden, the splitter
+    // area must stay black instead of showing the light default palette.
     split->setStyleSheet(
+        "QSplitter { background-color: #000000; }"
         "QSplitter::handle { background-color: #0b3d20; }");
     split->addWidget(mPpi);
     split->addWidget(mFlat);
