@@ -13,8 +13,8 @@
 #   ./run.sh replay x.jsonl [--speed N] [--loop]   JSONL replay
 #
 # udp / dump automatically check and (re)configure the environment:
-#   - host owns 192.168.8.1  (AR1021x AP)  -> setup/start_ap.sh
 #   - can0 is up             (PCAN-USB)     -> setup/start_can.sh
+#   - host owns 192.168.8.1  (AR1021x AP)  -> setup/start_ap.sh
 # Set AUTO_SETUP=0 to only check (and fail with a hint) instead of running sudo.
 #
 # Environment overrides:
@@ -43,44 +43,44 @@ fi
 
 # ── Environment auto-config ───────────────────────────────────────────────
 ensure_env() {
-    local ip_ok=0 can_ok=0
+    local can_ok=0 ip_ok=0
 
-    if ip -4 addr show 2>/dev/null | grep -q '192\.168\.8\.1'; then
-        ip_ok=1
-    fi
     if [ -e "/sys/class/net/$CAN_IFACE" ] \
        && [ "$(cat "/sys/class/net/$CAN_IFACE/operstate" 2>/dev/null)" = "up" ]; then
         can_ok=1
     fi
+    if ip -4 addr show 2>/dev/null | grep -q '192\.168\.8\.1'; then
+        ip_ok=1
+    fi
 
-    if [ "$ip_ok" = 1 ] && [ "$can_ok" = 1 ]; then
-        echo "[env] AP/CAN OK (192.168.8.1 owned, $CAN_IFACE up)"
+    if [ "$can_ok" = 1 ] && [ "$ip_ok" = 1 ]; then
+        echo "[env] CAN/AP OK ($CAN_IFACE up, 192.168.8.1 owned)"
         return 0
     fi
 
     if [ "${AUTO_SETUP:-1}" != "1" ]; then
-        echo "[env] not ready (ip_ok=$ip_ok can_ok=$can_ok). Run:" >&2
-        echo "      sudo $ROOT/setup/start_ap.sh && sudo $ROOT/setup/start_can.sh" >&2
+        echo "[env] not ready (can_ok=$can_ok ip_ok=$ip_ok). Run:" >&2
+        echo "      sudo $ROOT/setup/start_can.sh && sudo $ROOT/setup/start_ap.sh" >&2
         exit 1
     fi
 
-    if [ "$ip_ok" != 1 ]; then
-        echo "[env] 192.168.8.1 missing -> running setup/start_ap.sh"
-        sudo "$ROOT/setup/start_ap.sh"
-    fi
     if [ "$can_ok" != 1 ]; then
         echo "[env] $CAN_IFACE not up -> running setup/start_can.sh"
         sudo "$ROOT/setup/start_can.sh"
     fi
-
-    # Re-verify.
-    if ! ip -4 addr show 2>/dev/null | grep -q '192\.168\.8\.1'; then
-        echo "[env] error: still no 192.168.8.1 (AR1021x adapter plugged in?)" >&2
-        exit 1
+    if [ "$ip_ok" != 1 ]; then
+        echo "[env] 192.168.8.1 missing -> running setup/start_ap.sh"
+        sudo "$ROOT/setup/start_ap.sh"
     fi
+
+    # Re-verify (CAN first, then AP).
     if ! { [ -e "/sys/class/net/$CAN_IFACE" ] \
            && [ "$(cat "/sys/class/net/$CAN_IFACE/operstate" 2>/dev/null)" = "up" ]; }; then
         echo "[env] error: $CAN_IFACE still not up (PCAN-USB adapter?)" >&2
+        exit 1
+    fi
+    if ! ip -4 addr show 2>/dev/null | grep -q '192\.168\.8\.1'; then
+        echo "[env] error: still no 192.168.8.1 (AR1021x adapter plugged in?)" >&2
         exit 1
     fi
     echo "[env] environment configured"

@@ -219,11 +219,17 @@ def preflight(args):
         print(f"[boot] link OK ({DEFAULT_HOST_IP} owned, {args.can_iface} up)")
         ensure_can_queue(args.can_iface)
         return
-    print(f"[boot] link check: host IP={ok_ip}, {args.can_iface} up={ok_can}")
+    print(f"[boot] link check: {args.can_iface} up={ok_can}, host IP={ok_ip}")
     if not args.auto_setup:
-        print("[boot] fix with:  sudo ./setup/start_ap.sh && sudo ./setup/start_can.sh")
+        print("[boot] fix with:  sudo ./setup/start_can.sh && sudo ./setup/start_ap.sh")
         print("[boot] or rerun with --auto-setup")
         raise SystemExit(2)
+    if not ok_can:
+        print("[boot] running setup/start_can.sh ...")
+        res = subprocess.run(['sudo', str(SETUP / 'start_can.sh')])
+        if res.returncode != 0:
+            raise RuntimeError("start_can.sh failed — check the PCAN-USB "
+                               "adapter with 'ip link show can0'")
     if not ok_ip:
         print("[boot] running setup/start_ap.sh ...")
         res = subprocess.run(['sudo', str(SETUP / 'start_ap.sh')])
@@ -231,12 +237,8 @@ def preflight(args):
             raise RuntimeError(
                 "start_ap.sh failed — check that the AR1021x USB device is "
                 "enumerated (lsusb | grep 0cf3) and the radar has 15V power")
-    if not ok_can:
-        print("[boot] running setup/start_can.sh ...")
-        res = subprocess.run(['sudo', str(SETUP / 'start_can.sh')])
-        if res.returncode != 0:
-            raise RuntimeError("start_can.sh failed — check the PCAN-USB "
-                               "adapter with 'ip link show can0'")
+    if not iface_is_up(args.can_iface):
+        raise RuntimeError(f"{args.can_iface} still not up")
     if not host_has_ip(DEFAULT_HOST_IP):
         raise RuntimeError(f"host still does not own {DEFAULT_HOST_IP}")
     print("[boot] link ready")
