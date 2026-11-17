@@ -44,12 +44,6 @@ QString elLabel(int deg) {
     return deg > 0 ? QStringLiteral("+") + QString::number(deg)
                    : QString::number(deg);
 }
-
-QRectF legendBarRect(const QRectF &plot) {
-    const double barW = std::min(320.0, plot.width() * 0.62);
-    constexpr double barH = 12.0;
-    return QRectF(plot.left(), plot.bottom() + 34.0, barW, barH);
-}
 }  // namespace
 
 FlatView::FlatView(QWidget *parent) : QWidget(parent) {
@@ -110,61 +104,10 @@ double FlatView::unrolledAz(double azDeg) {
     return a;   // 0..240 is the forward sector; >240 is the rear blind wedge
 }
 
-bool FlatView::backgroundCacheValid() const {
-    return !mBackgroundCache.isNull()
-        && mCachedWidgetSize == size()
-        && mCachedRangeLimit == mRangeLimit
-        && mCachedDevicePixelRatio == devicePixelRatioF()
-        && mCachedFontValid
-        && mCachedFont == font();
-}
-
-void FlatView::rebuildBackgroundCache() {
-    const QSize sz = size();
-    if (sz.isEmpty()) {
-        mBackgroundCache = QPixmap();
-        return;
-    }
-
-    const qreal dpr = devicePixelRatioF();
-    QPixmap cache(QSizeF(sz.width() * dpr, sz.height() * dpr).toSize());
-    cache.setDevicePixelRatio(dpr);
-    cache.fill(kBg);
-
-    QPainter p(&cache);
-    p.scale(dpr, dpr);
-    p.setRenderHint(QPainter::Antialiasing, true);
-
-    const QRectF plot(kLeft, kTop,
-                      sz.width() - kLeft - kRight,
-                      sz.height() - kTop - kBottom);
-    if (plot.width() >= 40.0 && plot.height() >= 40.0) {
-        drawGrid(p, plot);
-        drawAzimuthScale(p, plot);
-        drawElevationScale(p, plot);
-        drawLegendStatic(p, plot);
-    }
-
-    p.end();
-    mBackgroundCache = cache;
-    mCachedWidgetSize = sz;
-    mCachedRangeLimit = mRangeLimit;
-    mCachedDevicePixelRatio = dpr;
-    mCachedFont = font();
-    mCachedFontValid = true;
-}
-
 void FlatView::paintEvent(QPaintEvent *) {
-    if (!backgroundCacheValid()) {
-        rebuildBackgroundCache();
-    }
-
     QPainter p(this);
-    if (mBackgroundCache.isNull()) {
-        p.fillRect(rect(), kBg);
-    } else {
-        p.drawPixmap(0, 0, mBackgroundCache);
-    }
+    p.fillRect(rect(), kBg);
+    p.setRenderHint(QPainter::Antialiasing, true);
 
     const QRectF plot(kLeft, kTop,
                       width() - kLeft - kRight,
@@ -172,9 +115,11 @@ void FlatView::paintEvent(QPaintEvent *) {
     if (plot.width() < 40.0 || plot.height() < 40.0) {
         return;
     }
-    p.setRenderHint(QPainter::Antialiasing, true);
+    drawGrid(p, plot);
     drawPoints(p, plot);
-    drawLegendCounts(p, plot);
+    drawAzimuthScale(p, plot);
+    drawElevationScale(p, plot);
+    drawLegend(p, plot);
 }
 
 void FlatView::drawGrid(QPainter &p, const QRectF &plot) const {
@@ -276,45 +221,40 @@ void FlatView::drawElevationScale(QPainter &p, const QRectF &plot) const {
     }
 }
 
-void FlatView::drawLegendStatic(QPainter &p, const QRectF &plot) const {
+void FlatView::drawLegend(QPainter &p, const QRectF &plot) const {
     QFont small = font();
     small.setPointSizeF(7.5);
     p.setFont(small);
 
-    const QRectF bar = legendBarRect(plot);
+    const double barW = std::min(320.0, plot.width() * 0.62);
+    constexpr double barH = 12.0;
+    const double barX = plot.left();
+    const double barY = plot.bottom() + 34.0;
     for (int i = 0; i < kBins; ++i) {
-        p.fillRect(QRectF(bar.left() + i * bar.width() / kBins, bar.top(),
-                          bar.width() / kBins + 1.0, bar.height()),
+        p.fillRect(QRectF(barX + i * barW / kBins, barY,
+                          barW / kBins + 1.0, barH),
                    rangeColor((i + 0.5) / kBins));
     }
     // A dim outer frame marks where the scale starts and ends.
     p.setPen(QPen(kFrame, 1.0));
     p.setBrush(Qt::NoBrush);
-    p.drawRect(bar);
+    p.drawRect(QRectF(barX, barY, barW, barH));
 
     p.setPen(kText);
-    p.drawText(QRectF(bar.left(), bar.bottom() + 1.0, 60.0, 15.0),
+    p.drawText(QRectF(barX, barY + barH + 1.0, 60.0, 15.0),
                Qt::AlignLeft | Qt::AlignTop, QStringLiteral("0 m"));
-    p.drawText(QRectF(bar.left() + bar.width() / 2.0 - 30.0,
-                      bar.bottom() + 1.0, 60.0, 15.0),
+    p.drawText(QRectF(barX + barW / 2.0 - 30.0, barY + barH + 1.0,
+                      60.0, 15.0),
                Qt::AlignCenter | Qt::AlignTop,
                QString::number(mRangeLimit / 2.0, 'f', 1) + " m");
-    p.drawText(QRectF(bar.right() - 60.0, bar.bottom() + 1.0,
-                      60.0, 15.0),
+    p.drawText(QRectF(barX + barW - 60.0, barY + barH + 1.0, 60.0, 15.0),
                Qt::AlignRight | Qt::AlignTop,
                QString::number(mRangeLimit, 'f', 1) + " m");
-}
 
-void FlatView::drawLegendCounts(QPainter &p, const QRectF &plot) const {
-    QFont small = font();
-    small.setPointSizeF(7.5);
-    p.setFont(small);
-
-    const QRectF bar = legendBarRect(plot);
-    const double infoX = bar.right() + 18.0;
+    const double infoX = barX + barW + 18.0;
     p.setPen(kTextDim);
     // Share the colour scale's row, vertically centred against the bar.
-    p.drawText(QRectF(infoX, bar.top(), 260.0, bar.height()),
+    p.drawText(QRectF(infoX, barY, 260.0, barH),
                Qt::AlignLeft | Qt::AlignVCenter,
                QString::fromUtf8("点数 %1   俯仰越界 %2")
                    .arg(mShown).arg(mOutOfFov));

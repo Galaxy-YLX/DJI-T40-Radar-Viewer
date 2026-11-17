@@ -1,8 +1,6 @@
 #pragma once
 
 #include <QColor>
-#include <QFont>
-#include <QPixmap>
 #include <QVector>
 #include <QWidget>
 
@@ -32,14 +30,11 @@ protected:
 private:
     static QColor rangeColor(double t);      // 0 = near, 1 = far
     static double unrolledAz(double azDeg);  // 240..360/0..120 -> 0..240
-    bool backgroundCacheValid() const;
-    void rebuildBackgroundCache();
     void drawGrid(QPainter &p, const QRectF &plot) const;
     void drawPoints(QPainter &p, const QRectF &plot);
     void drawAzimuthScale(QPainter &p, const QRectF &plot) const;
     void drawElevationScale(QPainter &p, const QRectF &plot) const;
-    void drawLegendStatic(QPainter &p, const QRectF &plot) const;
-    void drawLegendCounts(QPainter &p, const QRectF &plot) const;
+    void drawLegend(QPainter &p, const QRectF &plot) const;
 
     QVector<SectorPoint> mPoints;
     double mRangeLimit = 25.0;
@@ -47,11 +42,4 @@ private:
     bool mFlipLeftRight = false;
     int mShown = 0;
     int mOutOfFov = 0;
-
-    QPixmap mBackgroundCache;
-    QSize mCachedWidgetSize;
-    double mCachedRangeLimit = -1.0;
-    qreal mCachedDevicePixelRatio = -1.0;
-    QFont mCachedFont;
-    bool mCachedFontValid = false;
 };

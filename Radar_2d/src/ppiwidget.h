@@ -1,8 +1,6 @@
 #pragma once
 
 #include <QColor>
-#include <QFont>
-#include <QPixmap>
 #include <QString>
 #include <QWidget>
 #include <QVector>
@@ -81,8 +79,6 @@ private:
     bool inBlind(double azDeg) const;
     double arcStartAngle() const;  // Qt arc angles, 1/16 degree
     double arcSpanAngle() const;
-    bool backgroundCacheValid() const;
-    void rebuildBackgroundCache();
 
     QVector<SectorPoint> mPoints;
     HudState mHud;
@@ -93,13 +89,4 @@ private:
     // Rear no-data wedge; the PPI shows +/-120 deg around forward.
     double mBlindStartDeg = kBlindStartDeg;
     double mBlindEndDeg = kBlindEndDeg;
-
-    QPixmap mBackgroundCache;
-    QSize mCachedWidgetSize;
-    double mCachedRangeLimit = -1.0;
-    double mCachedBlindStartDeg = -1.0;
-    double mCachedBlindEndDeg = -1.0;
-    qreal mCachedDevicePixelRatio = -1.0;
-    QFont mCachedFont;
-    bool mCachedFontValid = false;
 };
