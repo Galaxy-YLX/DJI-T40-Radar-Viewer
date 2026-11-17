@@ -100,12 +100,34 @@ QColor PpiWidget::snrColor(float snr) {
     return QColor(0, g, int(g * 0.4f + 0.5f));
 }
 
-void PpiWidget::paintEvent(QPaintEvent *) {
-    QPainter p(this);
-    p.fillRect(rect(), Qt::black);
+bool PpiWidget::backgroundCacheValid() const {
+    return !mBackgroundCache.isNull()
+        && mCachedWidgetSize == size()
+        && mCachedRangeLimit == mRangeLimit
+        && mCachedBlindStartDeg == mBlindStartDeg
+        && mCachedBlindEndDeg == mBlindEndDeg
+        && mCachedDevicePixelRatio == devicePixelRatioF()
+        && mCachedFontValid
+        && mCachedFont == font();
+}
+
+void PpiWidget::rebuildBackgroundCache() {
+    const QSize sz = size();
+    if (sz.isEmpty()) {
+        mBackgroundCache = QPixmap();
+        return;
+    }
+
+    const qreal dpr = devicePixelRatioF();
+    QPixmap cache(QSizeF(sz.width() * dpr, sz.height() * dpr).toSize());
+    cache.setDevicePixelRatio(dpr);
+    cache.fill(Qt::black);
+
+    QPainter p(&cache);
+    p.scale(dpr, dpr);
     p.setRenderHint(QPainter::Antialiasing, true);
 
-    const double w = width(), h = height();
+    const double w = sz.width(), h = sz.height();
     const double cx = w / 2.0, cy = h / 2.0;
     // Extra margin leaves room for the outer azimuth scale and its numerals.
     const double radiusPx = std::min(w, h) * 0.5 - 52.0;
@@ -122,9 +144,8 @@ void PpiWidget::paintEvent(QPaintEvent *) {
                            cy - radiusPx * std::cos(rad)));
     }
 
-    // Range rings + labels, all green phosphor. Rings span only the sector
-    // covered by the current point-cloud source. The outermost boundary is
-    // drawn once below with the azimuth scale, so it is never doubled up.
+    // Range rings + labels. The outermost boundary is drawn once with the
+    // azimuth scale below, so it is never doubled up.
     const int startAngle = int(arcStartAngle());
     const int spanAngle = int(arcSpanAngle());
     QFont small = font();
@@ -138,16 +159,11 @@ void PpiWidget::paintEvent(QPaintEvent *) {
                       startAngle, spanAngle);
         }
         p.setPen(kScale);
-        // Lift the range numbers above the 090 radial, which now carries the
-        // outer azimuth ticks and the 090 numeral.
         p.drawText(QPointF(cx + rp + 3.0, cy - 14.0),
                    QString::number(int(d)) + "m");
     }
 
-    // Outermost boundary and compass scale share one circle: the bearing
-    // radials end on it and the azimuth ticks continue outwards from it, so
-    // radials and 30° ticks line up with no gap or doubled arc. Only the
-    // source's covered sector is drawn; its no-data wedge stays blank.
+    // Outermost boundary and compass scale share one circle.
     const QRectF scaleRect(cx - radiusPx, cy - radiusPx,
                            2.0 * radiusPx, 2.0 * radiusPx);
     p.setPen(QPen(kRing, 1, Qt::SolidLine));
@@ -179,6 +195,35 @@ void PpiWidget::paintEvent(QPaintEvent *) {
         p.drawText(QRectF(lx - 16.0, ly - 8.0, 32.0, 16.0), Qt::AlignCenter,
                    QString::number(a).rightJustified(3, QLatin1Char('0')));
     }
+
+    p.end();
+    mBackgroundCache = cache;
+    mCachedWidgetSize = sz;
+    mCachedRangeLimit = mRangeLimit;
+    mCachedBlindStartDeg = mBlindStartDeg;
+    mCachedBlindEndDeg = mBlindEndDeg;
+    mCachedDevicePixelRatio = dpr;
+    mCachedFont = font();
+    mCachedFontValid = true;
+}
+
+void PpiWidget::paintEvent(QPaintEvent *) {
+    if (!backgroundCacheValid()) {
+        rebuildBackgroundCache();
+    }
+
+    QPainter p(this);
+    if (mBackgroundCache.isNull()) {
+        p.fillRect(rect(), Qt::black);
+    } else {
+        p.drawPixmap(0, 0, mBackgroundCache);
+    }
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    const double w = width(), h = height();
+    const double cx = w / 2.0, cy = h / 2.0;
+    // Extra margin leaves room for the outer azimuth scale and its numerals.
+    const double radiusPx = std::min(w, h) * 0.5 - 52.0;
 
     // Returns: a soft phosphor halo plus a green core graded by SNR.
     // A left-right flip mirrors the point cloud about the forward/back axis
