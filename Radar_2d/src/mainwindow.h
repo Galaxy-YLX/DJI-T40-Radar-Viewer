@@ -16,6 +16,7 @@ class QTimer;
 class QLabel;
 class QProcess;
 class QPushButton;
+class QUdpSocket;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -43,6 +44,9 @@ private:
     void syncSpeedGateDisplay(double mps);
     void setMinAmp(int n);
     void syncMinAmpDisplay(int n);
+    void setMotorRpm(int rpm);
+    void syncMotorRpmDisplay(int rpm);
+    void sendMotorRpm();
     void startRadar();
     void stopRadar();
     void setPowerRunning(bool running);
@@ -63,6 +67,9 @@ private:
     QLabel *mMinAmpValue = nullptr;
     QPushButton *mMinAmpPlus = nullptr;
     QPushButton *mMinAmpMinus = nullptr;
+    QLabel *mMotorRpmValue = nullptr;
+    QPushButton *mMotorRpmPlus = nullptr;
+    QPushButton *mMotorRpmMinus = nullptr;
     QPushButton *mPowerOn = nullptr;
     QPushButton *mPowerOff = nullptr;
 
@@ -91,4 +98,6 @@ private:
     double mOffsetDeg;
     double mSpeedGateMps = 0.0;
     int mMinAmp = 0;
+    QUdpSocket *mMotorControl = nullptr;
+    int mMotorRpm = 900;
 };

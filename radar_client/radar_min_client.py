@@ -214,6 +214,10 @@ class ClientConfig:
     motor_start_subid: int = 1
     motor_run_rpm: int = 900       # rotor speed setpoint sent over CAN while running
     motor_stop_rpm: int = 50       # rotor speed setpoint sent at shutdown (idle)
+    motor_control_port: int = 0    # UDP text control port; 0 = disabled
+    no_speed_relay: bool = False   # drop app.elf 0x1E80 instead of bridging it
+    motor_speed_override: bool = False  # rewrite app.elf 0x1E80 payload
+    motor_rpm_interval: float = 0.0  # periodic re-assert (s); 0 = send once
     send_sample_start: bool = False
     send_sample_mark: bool = False
     send_data_start_type: Optional[int] = None
@@ -1929,6 +1933,16 @@ class RadarClient:
             self.v2_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.v2_sock.bind((config.local_ip, config.v2_local_port))
             self.v2_sock.setblocking(False)
+        # Optional loopback text control (`rpm <n>`) for a co-located viewer.
+        self.motor_control_sock = None
+        if config.motor_control_port > 0:
+            self.motor_control_sock = socket.socket(
+                socket.AF_INET, socket.SOCK_DGRAM)
+            self.motor_control_sock.bind(("127.0.0.1",
+                                          config.motor_control_port))
+            self.motor_control_sock.setblocking(False)
+            print(f"[cfg] motor_control=udp://127.0.0.1:"
+                  f"{config.motor_control_port}")
         self.v1_seq = 0
         self.time_sync_counter = 0
         self.data_transfer = DataTransferState()
@@ -2281,15 +2295,21 @@ class RadarClient:
 
     def run(self) -> None:
         self.send_one_shots()
-        # Send the running setpoint exactly once; the ESC holds the last
-        # commanded speed and we do not re-assert it.
+        # Host-controlled setpoint. Re-assert faster than app.elf's 0.4 Hz
+        # 900 rpm frame when requested; --no-speed-relay drops that frame.
         if self.can_device is not None:
             self._send_motor_speed_on_can(self.config.motor_run_rpm)
+        next_rpm_at = (time.monotonic() + self.config.motor_rpm_interval
+                       if self.config.motor_rpm_interval > 0.0
+                       else float("inf"))
         while True:
             if self.plotter is not None and not self.plotter.is_alive():
                 print("[info] plot window closed, exiting")
                 break
             now = time.monotonic()
+            if self.can_device is not None and now >= next_rpm_at:
+                self._send_motor_speed_on_can(self.config.motor_run_rpm)
+                next_rpm_at = now + self.config.motor_rpm_interval
             timeout = 0.25
             for task in self.tasks:
                 if now >= task.next_at:
@@ -2309,12 +2329,19 @@ class RadarClient:
             read_socks = [self.control_sock]
             if self.v2_sock is not None:
                 read_socks.append(self.v2_sock)
+            if self.motor_control_sock is not None:
+                read_socks.append(self.motor_control_sock)
             if self.can_device is not None:
                 read_socks.append(self.can_device.sock)
             readable, _, _ = select.select(read_socks, [], [], timeout)
             for sock_obj in readable:
                 if self.can_device is not None and sock_obj is self.can_device.sock:
                     self._handle_can_readable()
+                    continue
+                if (self.motor_control_sock is not None
+                        and sock_obj is self.motor_control_sock):
+                    data, _ = sock_obj.recvfrom(65535)
+                    self._handle_motor_control_datagram(data)
                     continue
                 data, peer = sock_obj.recvfrom(65535)
                 if sock_obj is self.control_sock:
@@ -2431,15 +2458,28 @@ class RadarClient:
         print(f"[bridge] sent motor_speed={int(rpm)} rpm to ESC "
               f"({len(frame)}B → can_id=0x{self.config.can_tx_id:03X})")
 
-    def _on_motor_rpm_change(self, rpm: int) -> None:
-        """Live rotation-speed change from the plot UI dropdown.
+    def _set_motor_rpm(self, rpm: int, source: str = "host") -> None:
+        """Update the running setpoint and push it to the ESC immediately."""
+        rpm = max(0, min(1800, int(rpm)))
+        self.config.motor_run_rpm = rpm
+        self._send_motor_speed_on_can(rpm)
+        print(f"[{source}] rotation speed → {rpm} rpm")
 
-        Updates the running setpoint (so the periodic re-send keeps using it)
-        and pushes it to the ESC immediately.
-        """
-        self.config.motor_run_rpm = int(rpm)
-        self._send_motor_speed_on_can(self.config.motor_run_rpm)
-        print(f"[plot] rotation speed → {self.config.motor_run_rpm} rpm")
+    def _handle_motor_control_datagram(self, data: bytes) -> None:
+        """Handle loopback text commands from the co-located viewer."""
+        text = data.decode("utf-8", "replace").strip()
+        parts = text.split()
+        if len(parts) == 2 and parts[0].lower() == "rpm":
+            try:
+                self._set_motor_rpm(int(parts[1]), source="control")
+            except ValueError:
+                print(f"[control] invalid rpm command: {text!r}")
+            return
+        print(f"[control] unknown command: {text!r}")
+
+    def _on_motor_rpm_change(self, rpm: int) -> None:
+        """Live rotation-speed change from the plot UI dropdown."""
+        self._set_motor_rpm(rpm, source="plot")
 
     def _send_motor_stop_on_can(self) -> None:
         """Emit a final motor_speed setpoint on CAN before releasing the
@@ -2530,7 +2570,7 @@ class RadarClient:
                     pass
                 setattr(self, attr, None)
         # 5) Close the UDP sockets.
-        for attr in ("control_sock", "v2_sock"):
+        for attr in ("control_sock", "v2_sock", "motor_control_sock"):
             sock = getattr(self, attr, None)
             if sock is not None:
                 try:
@@ -2545,6 +2585,33 @@ class RadarClient:
         label = MOTOR_CMD_IDS.get(cmd_id, f"0x{cmd_id:02X}")
         is_response = (frame.flags & 0x80) != 0
         direction = "app→esc" if not is_response else "esc→app(ack)"
+
+        # Rewrite app.elf's own 0x1E80 payload while preserving seq/sender/
+        # receiver/flags. The ESC ACK then still matches the frame app.elf
+        # believes it sent, which keeps its motor FSM in the running state.
+        # --no-speed-relay is kept for compatibility but drops the frame.
+        if (cmd_id == 0x80 and not is_response
+                and (self.config.motor_speed_override
+                     or self.config.no_speed_relay)):
+            app_rpm = -1
+            if len(frame.payload) >= 2:
+                app_rpm = struct.unpack("<H", frame.payload[:2])[0]
+            if self.config.motor_speed_override:
+                raw = build_v1_frame(
+                    msg_id=frame.msg_id,
+                    payload=struct.pack("<H", self.config.motor_run_rpm),
+                    seq=frame.seq,
+                    sender=frame.sender,
+                    receiver=frame.receiver,
+                    flags=frame.flags,
+                )
+                print(f"[bridge] OVERRIDE app motor_speed {app_rpm} → "
+                      f"{self.config.motor_run_rpm} rpm (seq={frame.seq})")
+            else:
+                print(f"[bridge] DROP app motor_speed={app_rpm} rpm "
+                      f"(host setpoint={self.config.motor_run_rpm} rpm)")
+                return True
+
         if self.can_device is not None:
             # Transparent bridge: split the DUML bytes into 8B CAN chunks
             # ourselves so we can log each chunk individually (candump
@@ -2898,6 +2965,19 @@ def parse_args() -> ClientConfig:
     parser.add_argument("--motor-stop-rpm", type=int, default=50,
                         help="Rotor speed setpoint (rpm) sent at shutdown "
                              "(idle; default 50).")
+    parser.add_argument("--motor-control-port", type=int, default=0,
+                        help="Loopback UDP port accepting `rpm <n>` text "
+                             "commands from a co-located viewer (0 = off).")
+    parser.add_argument("--no-speed-relay", action="store_true",
+                        help="Drop app.elf 0x1E80 motor_speed frames instead "
+                             "of bridging them to CAN; keep the host setpoint.")
+    parser.add_argument("--motor-speed-override", action="store_true",
+                        help="Rewrite the payload of app.elf 0x1E80 frames "
+                             "with the host setpoint while preserving seq/"
+                             "sender/receiver, so ESC ACKs still match.")
+    parser.add_argument("--motor-rpm-interval", type=float, default=0.0,
+                        help="Re-assert the host RPM setpoint every N seconds "
+                             "(0 = once at startup).")
     parser.add_argument("--send-sample-start", action="store_true")
     parser.add_argument("--send-sample-mark", action="store_true")
     parser.add_argument("--send-data-start-type", type=int, choices=(0, 1))
@@ -3012,6 +3092,10 @@ def parse_args() -> ClientConfig:
         motor_start_subid=args.motor_start_subid,
         motor_run_rpm=args.motor_run_rpm,
         motor_stop_rpm=args.motor_stop_rpm,
+        motor_control_port=args.motor_control_port,
+        no_speed_relay=args.no_speed_relay,
+        motor_speed_override=args.motor_speed_override,
+        motor_rpm_interval=args.motor_rpm_interval,
         send_sample_start=args.send_sample_start,
         send_sample_mark=args.send_sample_mark,
         send_data_start_type=args.send_data_start_type,

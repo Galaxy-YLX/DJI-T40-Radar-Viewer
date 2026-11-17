@@ -20,6 +20,7 @@
 # Environment overrides:
 #   RADAR_IP (192.168.8.2)  CAN_IFACE (can0)  MIN_AMP (0)
 #   RANGE (25)  POINT_SIZE (0.5)  AZIMUTH_OFFSET (0)  MIN_RANGE (0)
+#   MOTOR_RPM (900)  MOTOR_CONTROL_PORT (50008)  — runtime ESC setpoint
 #   FLIP (1)  — 1 mirrors the point cloud left-right, 0 disables the mirror
 #   STATUS_SHOW (1)  startup status panel; STATUS_SHOW=0 disables it
 #   STATUS_LISTEN (1.0)  seconds of passive CAN traffic listening
@@ -38,6 +39,8 @@ RANGE="${RANGE:-25}"
 POINT_SIZE="${POINT_SIZE:-0.5}"
 AZIMUTH_OFFSET="${AZIMUTH_OFFSET:-0}"
 MIN_RANGE="${MIN_RANGE:-0}"
+MOTOR_RPM="${MOTOR_RPM:-900}"
+MOTOR_CONTROL_PORT="${MOTOR_CONTROL_PORT:-50008}"
 FLIP="${FLIP:-1}"
 STATUS_SHOW="${STATUS_SHOW:-1}"
 STATUS_LISTEN="${STATUS_LISTEN:-1.0}"
@@ -55,7 +58,7 @@ step() {
 
 echo "=================================================="
 echo "[run] radar2d launcher  mode=$MODE  $(date '+%F %T')"
-echo "[run] radar=$RADAR_IP can=$CAN_IFACE range=${RANGE}m min_amp=$MIN_AMP flip=$FLIP"
+echo "[run] radar=$RADAR_IP can=$CAN_IFACE range=${RANGE}m min_amp=$MIN_AMP motor=${MOTOR_RPM}rpm flip=$FLIP"
 echo "=================================================="
 
 # Optional --no-flip only when FLIP=0 (the viewer flips by default).
@@ -175,7 +178,9 @@ COMMON_ARGS=(--range "$RANGE" --point-size "$POINT_SIZE"
 UDP_ARGS=(--host "$RADAR_IP"
           --can-iface "$CAN_IFACE"
           --fc-client "$ROOT/radar_client/radar_min_client.py"
-          --fm-ramp-sec "$FM_RAMP_SEC")
+          --fm-ramp-sec "$FM_RAMP_SEC"
+          --motor-rpm "$MOTOR_RPM"
+          --motor-control-port "$MOTOR_CONTROL_PORT")
 
 case "$MODE" in
   demo)

@@ -33,6 +33,9 @@ static Config parseConfig(const QCoreApplication &app) {
         {"min-amp", "0x00F0: drop points with c3 below this", "n", "0"},
         {"min-range", "drop detections closer than this (m)", "m", "0"},
         {"speed-gate", "speed gate threshold in m/s (0 = off)", "m/s", "0"},
+        {"motor-rpm", "radar motor setpoint in rpm (0..1800)", "rpm", "900"},
+        {"motor-control-port", "loopback UDP port for runtime rpm control",
+         "port", "50008"},
         {"point-size", "blip radius in pixels", "px", "0.5"},
         {"can-iface", "SocketCAN interface used by the FC bridge", "iface",
          "can0"},
@@ -60,6 +63,8 @@ static Config parseConfig(const QCoreApplication &app) {
     cfg.minAmp = p.value("min-amp").toInt();
     cfg.minRangeM = p.value("min-range").toFloat();
     cfg.speedGateMps = std::clamp(p.value("speed-gate").toDouble(), 0.0, 20.0);
+    cfg.motorRpm = std::clamp(p.value("motor-rpm").toInt(), 0, 1800);
+    cfg.motorControlPort = p.value("motor-control-port").toUShort();
     cfg.pointRadius = p.value("point-size").toDouble();
     cfg.canIface = p.value("can-iface");
     cfg.fcClient = p.value("fc-client");

@@ -3,14 +3,17 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QHostAddress>
 #include <QHash>
 #include <QLabel>
+#include <QNetworkProxy>
 #include <QPalette>
 #include <QProcess>
 #include <QPushButton>
 #include <QSplitter>
 #include <QTimer>
 #include <QToolBar>
+#include <QUdpSocket>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
@@ -32,6 +35,9 @@ constexpr double kSpeedGateStepMps = 1.0;
 constexpr int kMinAmpMin = 0;
 constexpr int kMinAmpMax = 300;
 constexpr int kMinAmpStep = 5;
+constexpr int kMotorRpmMin = 0;
+constexpr int kMotorRpmMax = 1800;
+constexpr int kMotorRpmStep = 100;
 constexpr int kFpsWindowMs = 2000;  // sliding window for the instant frame rate
 constexpr int kFpsStaleMs = 500;    // no frame this long -> 0 Hz
 constexpr int kHudRefreshMs = 200;  // status text refresh, decoupled from frames
@@ -50,9 +56,11 @@ constexpr const char *kToolBarStyle =
     "QToolBar QPushButton:pressed { background-color: #0b3d20; }"
     "QToolBar QPushButton:disabled { color: #0b5c2c;"
     " border-color: #062d16; }"
-    // The +/- range, speed-gate and min-amp buttons keep the compact 14px design.
+    // The +/- range, speed-gate, min-amp and motor buttons keep the compact
+    // 14px design.
     "QPushButton#rangeButton, QPushButton#speedGateButton,"
-    " QPushButton#minAmpButton { font-size: 14px; padding: 0px; }";
+    " QPushButton#minAmpButton, QPushButton#motorButton"
+    " { font-size: 14px; padding: 0px; }";
 }
 
 namespace {
@@ -103,6 +111,9 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mSpeedGateMps = std::clamp(cfg.speedGateMps,
                                kSpeedGateMinMps, kSpeedGateMaxMps);
     mMinAmp = std::clamp(cfg.minAmp, kMinAmpMin, kMinAmpMax);
+    mMotorRpm = std::clamp(cfg.motorRpm, kMotorRpmMin, kMotorRpmMax);
+    mMotorControl = new QUdpSocket(this);
+    mMotorControl->setProxy(QNetworkProxy::NoProxy);
     mMeta.minAmp = mMinAmp;
     mHud.speedGateMps = mSpeedGateMps;
     mHud.source = cfg.demo ? QStringLiteral("演示") : QStringLiteral("00F0/UDP");
@@ -245,6 +256,36 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mMinAmpMinus->setFocusPolicy(Qt::NoFocus);
     ampBar->addWidget(mMinAmpMinus);
 
+    // Motor RPM setpoint. Only enabled while the FC client is running; the
+    // command goes to the client over loopback UDP, not directly to CAN.
+    addToolBarBreak(Qt::TopToolBarArea);
+    auto *motorBar = makeBar("转速");
+
+    auto *motorLabel = new QLabel("转速", motorBar);
+    motorBar->addWidget(motorLabel);
+    mMotorRpmValue = new QLabel(motorBar);
+    mMotorRpmValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    mMotorRpmValue->setMinimumWidth(40);
+    mMotorRpmValue->setStyleSheet("font-size: 15px; font-weight: bold;");
+    mMotorRpmValue->setToolTip(
+        "雷达电机目标转速（+ / - 按钮调整，rpm）：仅在开机后生效");
+    motorBar->addWidget(mMotorRpmValue);
+    auto *motorUnit = new QLabel("rpm", motorBar);
+    motorUnit->setStyleSheet("margin-left: 4px; margin-right: 4px;");
+    motorBar->addWidget(motorUnit);
+
+    mMotorRpmPlus = new QPushButton("+", motorBar);
+    mMotorRpmPlus->setObjectName("motorButton");
+    mMotorRpmPlus->setToolTip("转速 +100 rpm");
+    mMotorRpmPlus->setFocusPolicy(Qt::NoFocus);
+    motorBar->addWidget(mMotorRpmPlus);
+
+    mMotorRpmMinus = new QPushButton("−", motorBar);
+    mMotorRpmMinus->setObjectName("motorButton");
+    mMotorRpmMinus->setToolTip("转速 -100 rpm");
+    mMotorRpmMinus->setFocusPolicy(Qt::NoFocus);
+    motorBar->addWidget(mMotorRpmMinus);
+
     // Recording and replay have no toolbar row; they are driven purely by
     // --record / --replay / --speed / --loop on the command line.
 
@@ -273,6 +314,7 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     syncRangeDisplay(mPpi->rangeLimit());
     syncSpeedGateDisplay(mSpeedGateMps);
     syncMinAmpDisplay(mMinAmp);
+    syncMotorRpmDisplay(mMotorRpm);
 
     connect(mRangePlus, &QPushButton::clicked, this, [this] {
         mPpi->setRangeLimit(mPpi->rangeLimit() + kRangeStepM);
@@ -291,6 +333,12 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     });
     connect(mMinAmpMinus, &QPushButton::clicked, this, [this] {
         setMinAmp(mMinAmp - kMinAmpStep);
+    });
+    connect(mMotorRpmPlus, &QPushButton::clicked, this, [this] {
+        setMotorRpm(mMotorRpm + kMotorRpmStep);
+    });
+    connect(mMotorRpmMinus, &QPushButton::clicked, this, [this] {
+        setMotorRpm(mMotorRpm - kMotorRpmStep);
     });
     connect(mPpi, &PpiWidget::rangeChanged, this,
             &MainWindow::syncRangeDisplay);
@@ -402,7 +450,12 @@ void MainWindow::startRadar() {
                        QStringLiteral("--radar-ip"), mRadarIp,
                        QStringLiteral("--fm-ramp-sec"),
                        QString::number(mCfg.fmRampSec),
-                       QStringLiteral("--no-v2-listen")});
+                       QStringLiteral("--no-v2-listen"),
+                       QStringLiteral("--motor-rpm"),
+                       QString::number(mMotorRpm),
+                       QStringLiteral("--motor-control-port"),
+                       QString::number(mCfg.motorControlPort),
+                       QStringLiteral("--motor-speed-override")});
 }
 
 void MainWindow::stopRadar() {
@@ -420,6 +473,8 @@ void MainWindow::stopRadar() {
 void MainWindow::setPowerRunning(bool running) {
     mPowerOn->setEnabled(!mDemoMode && !running);
     mPowerOff->setEnabled(!mDemoMode && running);
+    mMotorRpmPlus->setEnabled(!mDemoMode && running);
+    mMotorRpmMinus->setEnabled(!mDemoMode && running);
 }
 
 void MainWindow::syncRangeDisplay(double m) {
@@ -482,6 +537,41 @@ void MainWindow::syncMinAmpDisplay(int n) {
     mMinAmpValue->setText(QString::number(n));
     mMinAmpMinus->setEnabled(n > kMinAmpMin);
     mMinAmpPlus->setEnabled(n < kMinAmpMax);
+}
+
+void MainWindow::syncMotorRpmDisplay(int rpm) {
+    mMotorRpmValue->setText(QString::number(rpm));
+    mMotorRpmMinus->setEnabled(mFcProcess
+                               && mFcProcess->state() != QProcess::NotRunning
+                               && !mDemoMode && rpm > kMotorRpmMin);
+    mMotorRpmPlus->setEnabled(mFcProcess
+                              && mFcProcess->state() != QProcess::NotRunning
+                              && !mDemoMode && rpm < kMotorRpmMax);
+}
+
+void MainWindow::sendMotorRpm() {
+    if (!mMotorControl || mCfg.motorControlPort == 0) {
+        return;
+    }
+    const QByteArray cmd = QStringLiteral("rpm %1").arg(mMotorRpm).toUtf8();
+    const qint64 sent = mMotorControl->writeDatagram(
+        cmd, QHostAddress::LocalHost, mCfg.motorControlPort);
+    if (sent != cmd.size()) {
+        std::fprintf(stderr,
+                     "[motor] control tx failed: %s (sent=%lld/%lld)\n",
+                     qPrintable(mMotorControl->errorString()),
+                     (long long)sent, (long long)cmd.size());
+    }
+}
+
+void MainWindow::setMotorRpm(int rpm) {
+    const int next = std::clamp(rpm, kMotorRpmMin, kMotorRpmMax);
+    if (next == mMotorRpm) {
+        return;
+    }
+    mMotorRpm = next;
+    syncMotorRpmDisplay(next);
+    sendMotorRpm();
 }
 
 // Single display entry point: live UDP and file replay both reach the PPI
