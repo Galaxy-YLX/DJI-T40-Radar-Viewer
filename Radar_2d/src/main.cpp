@@ -36,6 +36,8 @@ static Config parseConfig(const QCoreApplication &app) {
         {"can-iface", "SocketCAN interface used by the FC bridge", "iface",
          "can0"},
         {"fc-client", "path to radar_min_client.py (empty = auto)", "path", ""},
+        {"fm-ramp-sec", "flight_mode=1 hold before the 1->2 pm edge (s)", "s",
+         "0.5"},
         {"flip", "mirror the point cloud left-right (on by default)"},
         {"no-flip", "disable the left-right mirror"},
         {"demo", "render synthetic points (no radar hardware)"},
@@ -59,6 +61,7 @@ static Config parseConfig(const QCoreApplication &app) {
     cfg.pointRadius = p.value("point-size").toDouble();
     cfg.canIface = p.value("can-iface");
     cfg.fcClient = p.value("fc-client");
+    cfg.fmRampSec = p.value("fm-ramp-sec").toDouble();
     cfg.demo = p.isSet("demo");
     cfg.dump = p.isSet("dump");
     cfg.selftest = p.value("selftest");

@@ -25,6 +25,7 @@
 #   STATUS_LISTEN (1.0)  seconds of passive CAN traffic listening
 #   CAN_PROBE (0)  set 1 to send a 0x1E/F9 request and wait for the ESC echo
 #   RADAR_SSH_PORT (107)  radar port used for reachability check
+#   FM_RAMP_SEC (0.5)  flight_mode=1 hold before the 1->2 pm edge (0=disable)
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -42,6 +43,7 @@ STATUS_SHOW="${STATUS_SHOW:-1}"
 STATUS_LISTEN="${STATUS_LISTEN:-1.0}"
 CAN_PROBE="${CAN_PROBE:-0}"
 RADAR_SSH_PORT="${RADAR_SSH_PORT:-107}"
+FM_RAMP_SEC="${FM_RAMP_SEC:-0.5}"
 MODE="${1:-udp}"
 
 # ── Progress logging ────────────────────────────────────────────────────
@@ -172,7 +174,8 @@ COMMON_ARGS=(--range "$RANGE" --point-size "$POINT_SIZE"
              "${FLIP_ARGS[@]}")
 UDP_ARGS=(--host "$RADAR_IP"
           --can-iface "$CAN_IFACE"
-          --fc-client "$ROOT/radar_client/radar_min_client.py")
+          --fc-client "$ROOT/radar_client/radar_min_client.py"
+          --fm-ramp-sec "$FM_RAMP_SEC")
 
 case "$MODE" in
   demo)
@@ -208,7 +211,8 @@ case "$MODE" in
     step "start FC client (can-bridge $CAN_IFACE)"
     echo "[run] starting FC client (can-bridge $CAN_IFACE, no v2 listen) ..."
     python3 "$ROOT/radar_client/radar_min_client.py" \
-        --can-bridge "$CAN_IFACE" --radar-ip "$RADAR_IP" --no-v2-listen \
+        --can-bridge "$CAN_IFACE" --radar-ip "$RADAR_IP" \
+        --fm-ramp-sec "$FM_RAMP_SEC" --no-v2-listen \
         >/tmp/radar2d_fc.log 2>&1 &
     FC_PID=$!
     trap 'kill "$FC_PID" 2>/dev/null || true' EXIT

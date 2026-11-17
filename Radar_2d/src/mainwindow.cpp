@@ -299,6 +299,8 @@ void MainWindow::startRadar() {
     mFcProcess->start(QStringLiteral("python3"),
                       {mFcClientPath, QStringLiteral("--can-bridge"), mCanIface,
                        QStringLiteral("--radar-ip"), mRadarIp,
+                       QStringLiteral("--fm-ramp-sec"),
+                       QString::number(mCfg.fmRampSec),
                        QStringLiteral("--no-v2-listen")});
 }
 

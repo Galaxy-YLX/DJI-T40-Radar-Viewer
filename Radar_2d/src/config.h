@@ -14,6 +14,7 @@ struct Config {
     double pointRadius = 0.5;       // blip radius (px)
     QString canIface = "can0";      // SocketCAN iface used by the FC bridge
     QString fcClient;               // radar_min_client.py path (empty = auto)
+    double fmRampSec = 0.5;         // flight_mode=1 hold before the 1->2 edge
     bool flipLeftRight = true;      // mirror the point cloud left-right
     bool demo = false;              // synthetic points, no hardware
     bool dump = false;              // decode one frame as text and exit
