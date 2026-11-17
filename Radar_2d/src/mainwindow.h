@@ -34,10 +34,13 @@ private slots:
 
 private:
     void applyFrame(const SideFrame &fr);
+    void refreshFrameDisplay();
     void startLiveSource();
     void setupReplay();
     void startRecording();
     void syncRangeDisplay(double m);
+    void setSpeedGate(double mps);
+    void syncSpeedGateDisplay(double mps);
     void startRadar();
     void stopRadar();
     void setPowerRunning(bool running);
@@ -52,6 +55,9 @@ private:
     QLabel *mRangeValue = nullptr;
     QPushButton *mRangePlus = nullptr;
     QPushButton *mRangeMinus = nullptr;
+    QLabel *mSpeedGateValue = nullptr;
+    QPushButton *mSpeedGatePlus = nullptr;
+    QPushButton *mSpeedGateMinus = nullptr;
     QPushButton *mPowerOn = nullptr;
     QPushButton *mPowerOff = nullptr;
 
@@ -64,6 +70,8 @@ private:
     quint32 mCursorFrameIndex = 0;    // for the phase-1 detection store
     bool mRecording = false;
 
+    CrossFrameVelocity mVelocity;
+    SideFrame mLastFrame;      // latest frame with per-point speeds, before gating
     QString mRadarIp;
     QString mCanIface;
     QString mFcClientPath;
@@ -76,4 +84,5 @@ private:
     quint32 mDemoIndex = 0;
     qint64 mDemoLastUs = 0;
     double mOffsetDeg;
+    double mSpeedGateMps = 0.0;
 };

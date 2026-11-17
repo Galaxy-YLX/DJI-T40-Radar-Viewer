@@ -3,10 +3,102 @@
 #include <QDateTime>
 #include <QHostAddress>
 #include <QNetworkProxy>
+#include <cmath>
 #include <cstdio>
 #include <utility>
 
 #include "f0decoder.h"
+
+namespace {
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kMaxMatchSpeedMps = 15.0;  // association gate, not a display gate
+constexpr double kMatchSlackM = 0.25;       // tolerates small assay jitter
+constexpr double kSmoothAlpha = 0.35;
+}  // namespace
+
+void CrossFrameVelocity::reset() {
+    mTracks.clear();
+    mHaveLast = false;
+}
+
+void CrossFrameVelocity::estimate(SideFrame &fr) {
+    const double dtSec = fr.dtMs / 1000.0;
+    const bool continuous = mHaveLast
+                            && fr.frameIndex == mLastFrame + 1
+                            && dtSec > 0.0 && dtSec < 0.5;
+    if (!continuous) {
+        reset();
+    }
+
+    const int n = fr.points.size();
+    QVector<double> xs(n), ys(n);
+    for (int i = 0; i < n; ++i) {
+        const double rad = double(fr.points.at(i).azimuthDeg) * kPi / 180.0;
+        const double r = double(fr.points.at(i).rangeM);
+        xs[i] = r * std::sin(rad);
+        ys[i] = r * std::cos(rad);
+    }
+
+    const int m = mTracks.size();
+    QVector<int> prevForCur(n, -1);
+    QVector<int> curForPrev(m, -1);
+    QVector<double> dist2(n, 0.0);
+    if (continuous && m > 0 && n > 0) {
+        const double radius = kMatchSlackM + kMaxMatchSpeedMps * dtSec;
+        const double radius2 = radius * radius;
+        for (int i = 0; i < n; ++i) {
+            double best = radius2;
+            for (int j = 0; j < m; ++j) {
+                const double dx = xs[i] - mTracks.at(j).xM;
+                const double dy = ys[i] - mTracks.at(j).yM;
+                const double d2 = dx * dx + dy * dy;
+                if (d2 < best) {
+                    best = d2;
+                    prevForCur[i] = j;
+                    dist2[i] = d2;
+                }
+            }
+        }
+        // Mutual nearest neighbour suppresses matches to a different static
+        // blob that merely happens to sit inside the association radius.
+        for (int j = 0; j < m; ++j) {
+            double best = radius2;
+            for (int i = 0; i < n; ++i) {
+                const double dx = xs[i] - mTracks.at(j).xM;
+                const double dy = ys[i] - mTracks.at(j).yM;
+                const double d2 = dx * dx + dy * dy;
+                if (d2 < best) {
+                    best = d2;
+                    curForPrev[j] = i;
+                }
+            }
+        }
+    }
+
+    QVector<bool> usedPrev(m, false);
+    QVector<Tracklet> next;
+    next.reserve(n);
+    for (int i = 0; i < n; ++i) {
+        const int j = prevForCur.at(i);
+        Tracklet tr;
+        tr.xM = xs.at(i);
+        tr.yM = ys.at(i);
+        if (j >= 0 && curForPrev.at(j) == i && !usedPrev.at(j)) {
+            usedPrev[j] = true;
+            const double instant = std::sqrt(dist2.at(i)) / dtSec;
+            tr.speedMps = float((1.0 - kSmoothAlpha) * mTracks.at(j).speedMps
+                                + kSmoothAlpha * instant);
+        }
+        SectorPoint pt = fr.points.at(i);
+        pt.speedMps = tr.speedMps;
+        fr.points[i] = pt;
+        next.push_back(tr);
+    }
+
+    mTracks = next;
+    mLastFrame = fr.frameIndex;
+    mHaveLast = true;
+}
 
 SideStream::SideStream(const QString &host, quint16 port, float azimuthOffsetDeg,
                        int minAmp, float minRangeM, QObject *parent)

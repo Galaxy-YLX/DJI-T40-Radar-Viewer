@@ -32,6 +32,7 @@ struct SectorPoint {
     float snr = 0.0f;          // 0..255 (0x00F0 c3 graded)
     float amp = 0.0f;          // raw c3, before the snr grading
     float c4 = 0.0f;           // raw second intensity
+    float speedMps = 0.0f;     // cross-frame horizontal speed estimate (m/s)
     quint16 c5Us = 0;          // sensor timestamp, raw (wraps every 65.536 ms)
     quint16 azRaw = 0;         // native mrad value, for scan-time compensation
 };
@@ -57,6 +58,28 @@ struct SideFrame {
 };
 
 Q_DECLARE_METATYPE(SideFrame)
+
+// Horizontal speed estimated from consecutive frames. Each detection is
+// matched one-to-one to the nearest tracklet from the previous frame (mutual
+// nearest-neighbour check), then its speed is exponentially smoothed. Frames
+// with a non-continuous index or no usable dt reset the estimator, so replay
+// loops and stream restarts start from zero speed.
+class CrossFrameVelocity {
+public:
+    void reset();
+    void estimate(SideFrame &fr);   // fills SectorPoint::speedMps
+
+private:
+    struct Tracklet {
+        double xM = 0.0;
+        double yM = 0.0;
+        float speedMps = 0.0f;
+    };
+
+    QVector<Tracklet> mTracks;
+    quint32 mLastFrame = 0;
+    bool mHaveLast = false;
+};
 
 // Receives the radar stream on UDP 40204 and decodes only the 0x00F0 point
 // cloud. Other messages on that port (e.g. 1E61 perception) are ignored.

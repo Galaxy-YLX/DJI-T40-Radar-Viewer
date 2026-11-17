@@ -25,6 +25,9 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr int kRangeMinM = 5;
 constexpr int kRangeMaxM = 50;
 constexpr int kRangeStepM = 5;
+constexpr double kSpeedGateMinMps = 0.0;
+constexpr double kSpeedGateMaxMps = 20.0;
+constexpr double kSpeedGateStepMps = 1.0;
 constexpr int kFpsWindowMs = 2000;  // sliding window for the instant frame rate
 constexpr int kFpsStaleMs = 500;    // no frame this long -> 0 Hz
 constexpr int kHudRefreshMs = 200;  // status text refresh, decoupled from frames
@@ -43,9 +46,27 @@ constexpr const char *kToolBarStyle =
     "QToolBar QPushButton:pressed { background-color: #0b3d20; }"
     "QToolBar QPushButton:disabled { color: #0b5c2c;"
     " border-color: #062d16; }"
-    // The +/- range buttons keep their original compact 14px design.
-    "QPushButton#rangeButton { font-size: 14px; padding: 0px; }";
+    // The +/- range and speed-gate buttons keep the compact 14px design.
+    "QPushButton#rangeButton, QPushButton#speedGateButton {"
+    " font-size: 14px; padding: 0px; }";
 }
+
+namespace {
+SideFrame applySpeedGate(const SideFrame &fr, double gateMps) {
+    if (gateMps <= 0.0) {
+        return fr;
+    }
+    SideFrame out = fr;
+    out.points.clear();
+    out.points.reserve(fr.points.size());
+    for (const SectorPoint &pt : fr.points) {
+        if (pt.speedMps >= gateMps) {
+            out.points.push_back(pt);
+        }
+    }
+    return out;
+}
+}  // namespace
 
 MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     : QMainWindow(parent), mCfg(cfg), mOffsetDeg(cfg.offsetDeg) {
@@ -75,6 +96,9 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mFlat->setPointRadius(std::max(2.0, cfg.pointRadius * 3.0));
     mDemoMode = cfg.demo;
     mHud.rangeM = cfg.rangeM;
+    mSpeedGateMps = std::clamp(cfg.speedGateMps,
+                               kSpeedGateMinMps, kSpeedGateMaxMps);
+    mHud.speedGateMps = mSpeedGateMps;
     mHud.source = cfg.demo ? QStringLiteral("演示") : QStringLiteral("00F0/UDP");
     mHud.mode = QStringLiteral("实时");
     mHud.pointRadius = cfg.pointRadius;
@@ -155,6 +179,36 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mRangeMinus->setFocusPolicy(Qt::NoFocus);
     topBar->addWidget(mRangeMinus);
 
+    // The speed gate lives on its own toolbar row, directly under the range
+    // row, so the two controls keep the same left edge and visual rhythm.
+    addToolBarBreak(Qt::TopToolBarArea);
+    auto *speedBar = makeBar("速度门");
+
+    auto *speedGateLabel = new QLabel("速度门", speedBar);
+    speedBar->addWidget(speedGateLabel);
+    mSpeedGateValue = new QLabel(speedBar);
+    mSpeedGateValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    mSpeedGateValue->setMinimumWidth(40);
+    mSpeedGateValue->setStyleSheet("font-size: 15px; font-weight: bold;");
+    mSpeedGateValue->setToolTip(
+        "速度门（+ / - 按钮调整，m/s）：隐藏跨帧速度低于该阈值的回波");
+    speedBar->addWidget(mSpeedGateValue);
+    auto *speedGateUnit = new QLabel("m/s", speedBar);
+    speedGateUnit->setStyleSheet("margin-left: 4px; margin-right: 4px;");
+    speedBar->addWidget(speedGateUnit);
+
+    mSpeedGatePlus = new QPushButton("+", speedBar);
+    mSpeedGatePlus->setObjectName("speedGateButton");
+    mSpeedGatePlus->setToolTip("速度门 +1 m/s");
+    mSpeedGatePlus->setFocusPolicy(Qt::NoFocus);
+    speedBar->addWidget(mSpeedGatePlus);
+
+    mSpeedGateMinus = new QPushButton("−", speedBar);
+    mSpeedGateMinus->setObjectName("speedGateButton");
+    mSpeedGateMinus->setToolTip("速度门 -1 m/s");
+    mSpeedGateMinus->setFocusPolicy(Qt::NoFocus);
+    speedBar->addWidget(mSpeedGateMinus);
+
     // Recording and replay have no toolbar row; they are driven purely by
     // --record / --replay / --speed / --loop on the command line.
 
@@ -181,12 +235,19 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
 
     mPpi->setRangeLimit(cfg.rangeM);
     syncRangeDisplay(mPpi->rangeLimit());
+    syncSpeedGateDisplay(mSpeedGateMps);
 
     connect(mRangePlus, &QPushButton::clicked, this, [this] {
         mPpi->setRangeLimit(mPpi->rangeLimit() + kRangeStepM);
     });
     connect(mRangeMinus, &QPushButton::clicked, this, [this] {
         mPpi->setRangeLimit(mPpi->rangeLimit() - kRangeStepM);
+    });
+    connect(mSpeedGatePlus, &QPushButton::clicked, this, [this] {
+        setSpeedGate(mSpeedGateMps + kSpeedGateStepMps);
+    });
+    connect(mSpeedGateMinus, &QPushButton::clicked, this, [this] {
+        setSpeedGate(mSpeedGateMps - kSpeedGateStepMps);
     });
     connect(mPpi, &PpiWidget::rangeChanged, this,
             &MainWindow::syncRangeDisplay);
@@ -327,12 +388,30 @@ void MainWindow::syncRangeDisplay(double m) {
     mRangePlus->setEnabled(m < kRangeMaxM - 0.05);
 }
 
+void MainWindow::setSpeedGate(double mps) {
+    const double next = std::clamp(mps, kSpeedGateMinMps, kSpeedGateMaxMps);
+    if (next == mSpeedGateMps) {
+        return;
+    }
+    mSpeedGateMps = next;
+    mHud.speedGateMps = next;
+    syncSpeedGateDisplay(next);
+    // Re-filter the most recent frame so the new gate takes effect without
+    // waiting for the next UDP datagram.
+    refreshFrameDisplay();
+}
+
+void MainWindow::syncSpeedGateDisplay(double mps) {
+    mSpeedGateValue->setText(QString::number(int(mps + 0.5)));
+    mSpeedGateMinus->setEnabled(mps > kSpeedGateMinMps + 0.05);
+    mSpeedGatePlus->setEnabled(mps < kSpeedGateMaxMps - 0.05);
+}
+
 // Single display entry point: live UDP and file replay both reach the PPI
 // and the unrolled view through here, with identical frame objects.
 void MainWindow::applyFrame(const SideFrame &fr) {
     mHud.token = int(fr.frameToken);
     mHud.entries = int(fr.entryCount);
-    mHud.blips = int(fr.points.size());
     mHud.sumOk = fr.sumOk;
     mHud.rpm = fr.rpm;
     mHud.frameIndex = fr.frameIndex;
@@ -342,8 +421,20 @@ void MainWindow::applyFrame(const SideFrame &fr) {
                               : QStringLiteral("00F0/UDP");
     mHud.packetLossPct = mStream ? mStream->packetLossPct() : 0.0;
     mCursorFrameIndex = fr.frameIndex;
-    mPpi->setFrame(fr);
-    mFlat->setFrame(fr);
+
+    // Estimate speeds on the full point set; gating must not change what the
+    // estimator associates on following frames.
+    mLastFrame = fr;
+    mVelocity.estimate(mLastFrame);
+    refreshFrameDisplay();
+}
+
+void MainWindow::refreshFrameDisplay() {
+    const SideFrame shown = applySpeedGate(mLastFrame, mSpeedGateMps);
+    mHud.blips = int(shown.points.size());
+    mPpi->setFrame(shown);
+    mFlat->setFrame(shown);
+    mPpi->setHud(mHud);
 }
 
 void MainWindow::onFrameReady(const SideFrame &fr) {
@@ -392,6 +483,7 @@ void MainWindow::refreshHud() {
     mHud.fps = std::round(fps * 10.0) / 10.0;
     mHud.frames = mFrames;
     mHud.rangeM = mPpi->rangeLimit();
+    mHud.speedGateMps = mSpeedGateMps;
     mHud.pointRadius = mPpi->pointRadius();
     mHud.recording = mRecording;
     mHud.buffered = mStore.size();

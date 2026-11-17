@@ -32,6 +32,7 @@ static Config parseConfig(const QCoreApplication &app) {
          "0"},
         {"min-amp", "0x00F0: drop points with c3 below this", "n", "80"},
         {"min-range", "drop detections closer than this (m)", "m", "0"},
+        {"speed-gate", "speed gate threshold in m/s (0 = off)", "m/s", "0"},
         {"point-size", "blip radius in pixels", "px", "0.5"},
         {"can-iface", "SocketCAN interface used by the FC bridge", "iface",
          "can0"},
@@ -58,6 +59,7 @@ static Config parseConfig(const QCoreApplication &app) {
     cfg.offsetDeg = p.value("azimuth-offset").toDouble();
     cfg.minAmp = p.value("min-amp").toInt();
     cfg.minRangeM = p.value("min-range").toFloat();
+    cfg.speedGateMps = std::clamp(p.value("speed-gate").toDouble(), 0.0, 20.0);
     cfg.pointRadius = p.value("point-size").toDouble();
     cfg.canIface = p.value("can-iface");
     cfg.fcClient = p.value("fc-client");
@@ -446,6 +448,42 @@ static int runPipeSelftest(const QString &spec) {
         replay.play();
         check(replay.playing(), "play did not start");
         replay.pause();
+    }
+
+    // 7. Cross-frame speed: a 5 m/s target must separate from static clutter.
+    {
+        CrossFrameVelocity vel;
+        for (int i = 0; i < 12; ++i) {
+            SideFrame fr;
+            fr.valid = true;
+            fr.frameIndex = quint32(i);
+            fr.dtMs = 40.0;
+            SectorPoint moving;
+            moving.azimuthDeg = 90.0f;
+            moving.rangeM = 10.0f + 0.2f * float(i);
+            SectorPoint still;
+            still.azimuthDeg = 0.0f;
+            still.rangeM = 12.0f;
+            fr.points.append(moving);
+            fr.points.append(still);
+            vel.estimate(fr);
+            if (i == 11) {
+                check(fr.points.at(0).speedMps > 4.0f,
+                      "moving point cross-frame speed too low");
+                check(fr.points.at(1).speedMps < 0.5f,
+                      "static point got nonzero cross-frame speed");
+            }
+        }
+        SideFrame jump;
+        jump.frameIndex = 100;   // discontinuity: restart from zero
+        jump.dtMs = 40.0;
+        SectorPoint p;
+        p.azimuthDeg = 90.0f;
+        p.rangeM = 20.0f;
+        jump.points.append(p);
+        vel.estimate(jump);
+        check(jump.points.at(0).speedMps == 0.0f,
+              "velocity did not reset on frame-index jump");
     }
 
     std::printf("pipe selftest: %d frames, %d failures\n", frames.size(),

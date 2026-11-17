@@ -21,6 +21,7 @@ struct HudState {
     int token = 0;
     int entries = 0;        // raw records in the latest frame
     double rangeM = 0.0;
+    double speedGateMps = 0.0;
     double pointRadius = 0.0;
     double packetLossPct = 0.0;   // packet loss, %% since stream start
     QString source;         // point-cloud source (00F0/UDP / 演示)
@@ -37,7 +38,8 @@ struct HudState {
         return live == o.live && demo == o.demo && fps == o.fps &&
                frames == o.frames && blips == o.blips && token == o.token &&
                entries == o.entries &&
-               rangeM == o.rangeM && pointRadius == o.pointRadius &&
+               rangeM == o.rangeM && speedGateMps == o.speedGateMps &&
+               pointRadius == o.pointRadius &&
                packetLossPct == o.packetLossPct && source == o.source &&
                sumOk == o.sumOk && rpm == o.rpm &&
                frameIndex == o.frameIndex && dtMs == o.dtMs &&
