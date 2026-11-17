@@ -157,9 +157,14 @@ def network_info(host_ip: str, radar_ip: str, ssh_port: int) -> dict:
 
 
 def report(args: argparse.Namespace) -> None:
-    can = can_details(args.iface)
-    net = network_info(args.host_ip, args.radar_ip, args.ssh_port)
+    if not args.net_only:
+        report_can(args)
+    if not args.can_only:
+        report_net(args)
 
+
+def report_can(args: argparse.Namespace) -> None:
+    can = can_details(args.iface)
     say(f"--- CAN {args.iface} ---")
     if not can["present"]:
         say("  state     : interface not found (adapter plugged in?)")
@@ -186,6 +191,9 @@ def report(args: argparse.Namespace) -> None:
         if args.probe:
             say(f"  echo probe: {traffic['probe']}")
 
+
+def report_net(args: argparse.Namespace) -> None:
+    net = network_info(args.host_ip, args.radar_ip, args.ssh_port)
     say("--- AP / radar ---")
     iface = f" on {net['host_iface']}" if net["host_iface"] else ""
     say(f"  host IP   : {args.host_ip}{iface}")
@@ -206,6 +214,10 @@ def main() -> int:
                         help="seconds to listen for CAN frames")
     parser.add_argument("--probe", action="store_true",
                         help="send a 0x1E/F9 request and wait for the ESC echo")
+    parser.add_argument("--can-only", action="store_true",
+                        help="only print CAN diagnostics")
+    parser.add_argument("--net-only", action="store_true",
+                        help="only print AP/radar diagnostics")
     report(parser.parse_args())
     return 0
 
