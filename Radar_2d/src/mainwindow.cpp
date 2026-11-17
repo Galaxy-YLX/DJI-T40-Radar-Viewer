@@ -113,6 +113,19 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mPowerOff->setFocusPolicy(Qt::NoFocus);
     mPowerOff->setToolTip("停止 FC 保活并发送停电机命令");
     powerBar->addWidget(mPowerOff);
+
+    auto *viewToggle = new QPushButton("展开视图", powerBar);
+    viewToggle->setCheckable(true);
+    viewToggle->setChecked(true);
+    viewToggle->setFocusPolicy(Qt::NoFocus);
+    viewToggle->setToolTip(
+        "显示/隐藏方位-俯仰平铺视图（横轴 240→120，纵轴 +45→−45）");
+    viewToggle->setStyleSheet(
+        "QPushButton { background-color: #000000; }"
+        "QPushButton:checked { background-color: #0b3d20;"
+        " border-color: #00ff66; }");
+    powerBar->addWidget(viewToggle);
+    connect(viewToggle, &QPushButton::toggled, mFlat, &QWidget::setVisible);
     addToolBarBreak(Qt::TopToolBarArea);
 
     auto *topBar = makeBar("量程");
@@ -141,22 +154,6 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mRangeMinus->setToolTip("量程 -5 m");
     mRangeMinus->setFocusPolicy(Qt::NoFocus);
     topBar->addWidget(mRangeMinus);
-
-    // View toggle gets its own toolbar row, directly below the range row.
-    addToolBarBreak(Qt::TopToolBarArea);
-    auto *viewBar = makeBar("视图");
-    auto *viewToggle = new QPushButton("展开视图", viewBar);
-    viewToggle->setCheckable(true);
-    viewToggle->setChecked(true);
-    viewToggle->setFocusPolicy(Qt::NoFocus);
-    viewToggle->setToolTip(
-        "显示/隐藏方位-俯仰平铺视图（横轴 240→120，纵轴 +45→−45）");
-    viewToggle->setStyleSheet(
-        "QPushButton { background-color: #000000; }"
-        "QPushButton:checked { background-color: #0b3d20;"
-        " border-color: #00ff66; }");
-    viewBar->addWidget(viewToggle);
-    connect(viewToggle, &QPushButton::toggled, mFlat, &QWidget::setVisible);
 
     // Recording and replay have no toolbar row; they are driven purely by
     // --record / --replay / --speed / --loop on the command line.
