@@ -1,5 +1,7 @@
 #include "ppiwidget.h"
 
+#include "coords.h"
+
 #include <QKeyEvent>
 #include <QPainter>
 #include <QPaintEvent>
@@ -9,7 +11,6 @@
 #include <cstdlib>
 
 namespace {
-constexpr double kPi = 3.14159265358979323846;
 constexpr double kRangeStepM = 5.0;   // one key press = one toolbar step
 
 // Classic monochrome radar: pure black canvas, green phosphor only.
@@ -116,10 +117,9 @@ void PpiWidget::paintEvent(QPaintEvent *) {
         if (inBlind(a)) {
             continue;
         }
-        const double rad = a * kPi / 180.0;
-        p.drawLine(QPointF(cx, cy),
-                   QPointF(cx + radiusPx * std::sin(rad),
-                           cy - radiusPx * std::cos(rad)));
+        const Coord::ScreenPoint tip =
+            Coord::ppiPolarToScreen(a, radiusPx, cx, cy, false);
+        p.drawLine(QPointF(cx, cy), QPointF(tip.x, tip.y));
     }
 
     // Range rings + labels, all green phosphor. Rings span only the sector
@@ -159,12 +159,12 @@ void PpiWidget::paintEvent(QPaintEvent *) {
         }
         const bool major = (a % 30 == 0);
         const double len = major ? 9.0 : ((a % 10 == 0) ? 6.0 : 3.5);
-        const double rad = a * kPi / 180.0;
-        const double s = std::sin(rad), c = std::cos(rad);
+        const Coord::ScreenPoint inner =
+            Coord::ppiPolarToScreen(a, radiusPx, cx, cy, false);
+        const Coord::ScreenPoint outer =
+            Coord::ppiPolarToScreen(a, radiusPx + len, cx, cy, false);
         p.setPen(QPen(major ? kScale : kTick, 1.0));
-        p.drawLine(QPointF(cx + radiusPx * s, cy - radiusPx * c),
-                   QPointF(cx + (radiusPx + len) * s,
-                           cy - (radiusPx + len) * c));
+        p.drawLine(QPointF(inner.x, inner.y), QPointF(outer.x, outer.y));
     }
 
     p.setPen(kScale);
@@ -173,36 +173,34 @@ void PpiWidget::paintEvent(QPaintEvent *) {
         if (inBlind(a)) {
             continue;
         }
-        const double rad = a * kPi / 180.0;
-        const double lx = cx + labelR * std::sin(rad);
-        const double ly = cy - labelR * std::cos(rad);
-        p.drawText(QRectF(lx - 16.0, ly - 8.0, 32.0, 16.0), Qt::AlignCenter,
+        const Coord::ScreenPoint label =
+            Coord::ppiPolarToScreen(a, labelR, cx, cy, false);
+        p.drawText(QRectF(label.x - 16.0, label.y - 8.0, 32.0, 16.0),
+                   Qt::AlignCenter,
                    QString::number(a).rightJustified(3, QLatin1Char('0')));
     }
 
     // Returns: a soft phosphor halo plus a green core graded by SNR.
-    // A left-right flip mirrors the point cloud about the forward/back axis
-    // (forward stays up, right <-> left swap) by negating the screen-x term.
-    const double xSign = mFlipLeftRight ? -1.0 : 1.0;
+    // The shared polar->screen helper applies the left-right mirror only to
+    // blips (and future overlays); the bearing scale above stays unmirrored.
     // Keep each blip (halo included) inside the outermost range ring. Points
     // farther than the current range limit used to be drawn outside the PPI.
     const double maxRadiusPx = radiusPx - mPointRadius * 2.0;
     int clipped = 0;
     for (const SectorPoint &pt : mPoints) {
-        const double rad = pt.azimuthDeg * kPi / 180.0;
         const double rp = pt.rangeM / mRangeLimit * radiusPx;
         if (!std::isfinite(rp) || rp < 0.0 || rp > maxRadiusPx) {
             ++clipped;
             continue;
         }
-        const double x = cx + xSign * rp * std::sin(rad);
-        const double y = cy - rp * std::cos(rad);
+        const Coord::ScreenPoint sp = Coord::ppiPolarToScreen(
+            pt.azimuthDeg, rp, cx, cy, mFlipLeftRight);
+        const QPointF pos(sp.x, sp.y);
         p.setPen(Qt::NoPen);
         p.setBrush(QColor(0, 255, 102, 38));
-        p.drawEllipse(QPointF(x, y), mPointRadius * 2.0,
-                      mPointRadius * 2.0);
+        p.drawEllipse(pos, mPointRadius * 2.0, mPointRadius * 2.0);
         p.setBrush(snrColor(pt.snr));
-        p.drawEllipse(QPointF(x, y), mPointRadius, mPointRadius);
+        p.drawEllipse(pos, mPointRadius, mPointRadius);
     }
     if (std::getenv("RADAR2D_PPI_DEBUG")) {
         std::fprintf(stderr, "[ppi] range clipped=%d shown=%d limit=%.1fm\n",

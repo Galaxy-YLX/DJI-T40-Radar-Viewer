@@ -1,5 +1,7 @@
 #include "f0decoder.h"
 
+#include "coords.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -9,8 +11,6 @@
 namespace {
 constexpr int kHdr19 = 19;
 constexpr int kRec12 = 12;
-constexpr float kTwoPi = 6.28319f;  // same constant as the Python decoder
-constexpr double kRadToDeg = 180.0 / F0::kPi;
 
 inline uint16_t u16(const uint8_t *p) {
     return uint16_t(p[0] | (p[1] << 8));
@@ -78,7 +78,8 @@ F0Frame decode(const uint8_t *data, int len) {
         rp.c5Us = u16(e + 10);
         f.raw[k] = rp;
         f.az[k] = rp.azRaw / 1000.0f;
-        f.el[k] = rp.elRaw / 1000.0f - kTwoPi;
+        f.el[k] = float(float(rp.elRaw) / 1000.0f
+                        - float(Coord::kRawElevationWrapRad));
         f.r[k] = rp.rRaw / 1000.0f;
         f.c3[k] = float(rp.c3);
         f.c4[k] = float(rp.c4);
@@ -153,7 +154,8 @@ void projectRaw(const QVector<RawPoint> &raw, SideFrame &fr,
             continue;
         }
         const float azRad = rp.azRaw / 1000.0f;
-        const float elRad = rp.elRaw / 1000.0f - kTwoPi;
+        const float elRad = float(float(rp.elRaw) / 1000.0f
+                                  - float(Coord::kRawElevationWrapRad));
         // points_xy(): the horizontal range is r*cos(el), azimuth stays
         // clockwise with 0 degrees at the top, matching the PPI convention.
         const float range = float((rp.rRaw / 1000.0f) * std::cos(elRad));
@@ -164,17 +166,14 @@ void projectRaw(const QVector<RawPoint> &raw, SideFrame &fr,
         // of the no-data sector, 180 deg off physical forward (cross-check
         // against 1E61 xyz: best offset = az + pi). Rotate it so the returns
         // land in the PPI's +/-120 deg forward view.
-        float azDeg = float(std::fmod(double(azRad) * kRadToDeg
-                                      + 180.0 + double(offsetDeg), 360.0));
-        if (azDeg < 0.0f) {
-            azDeg += 360.0f;
-        }
+        const float azDeg = float(Coord::normalizeDeg(
+            Coord::radToDeg(azRad) + 180.0 + double(offsetDeg)));
         if (azDeg > kBlindStartDeg && azDeg < kBlindEndDeg) {
             continue;   // rear no-data sector, outside the display range
         }
         SectorPoint p;
         p.azimuthDeg = azDeg;
-        p.elevationDeg = float(elRad * kRadToDeg);
+        p.elevationDeg = float(Coord::radToDeg(elRad));
         p.rangeM = range;
         // The Python view grades c3 by (c3 - threshold)/300 into 16 levels;
         // map the same window onto the PPI's 0..255 brightness scale.

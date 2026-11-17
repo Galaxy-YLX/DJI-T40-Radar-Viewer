@@ -3,6 +3,7 @@
 #include <QVector>
 #include <cstdint>
 
+#include "coords.h"
 #include "sidestream.h"
 
 // Raw 0x00F0 point-cloud frame, wire values only. Ported from
@@ -23,7 +24,7 @@ struct F0Frame {
 
 namespace F0 {
 
-inline constexpr double kPi = 3.14159265358979323846;
+inline constexpr double kPi = Coord::kPi;
 
 // Decode one UDP payload (DUML magic need not be at offset 0).
 F0Frame decode(const uint8_t *data, int len);

@@ -7,10 +7,10 @@
 #include <cstdio>
 #include <utility>
 
+#include "coords.h"
 #include "f0decoder.h"
 
 namespace {
-constexpr double kPi = 3.14159265358979323846;
 constexpr double kMaxMatchSpeedMps = 15.0;  // association gate, not a display gate
 constexpr double kMatchSlackM = 0.25;       // tolerates small assay jitter
 constexpr double kSmoothAlpha = 0.35;
@@ -33,10 +33,10 @@ void CrossFrameVelocity::estimate(SideFrame &fr) {
     const int n = fr.points.size();
     QVector<double> xs(n), ys(n);
     for (int i = 0; i < n; ++i) {
-        const double rad = double(fr.points.at(i).azimuthDeg) * kPi / 180.0;
-        const double r = double(fr.points.at(i).rangeM);
-        xs[i] = r * std::sin(rad);
-        ys[i] = r * std::cos(rad);
+        const Coord::PhysicalPoint p = Coord::physicalXYFromPolar(
+            fr.points.at(i).azimuthDeg, fr.points.at(i).rangeM);
+        xs[i] = p.x;
+        ys[i] = p.y;
     }
 
     const int m = mTracks.size();

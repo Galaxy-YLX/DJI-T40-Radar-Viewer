@@ -16,13 +16,13 @@
 #include <cmath>
 #include <cstdio>
 
+#include "coords.h"
 #include "f0decoder.h"
 #include "flatview.h"
 #include "ppiwidget.h"
 #include "sidestream.h"
 
 namespace {
-constexpr double kPi = 3.14159265358979323846;
 constexpr int kRangeMinM = 5;
 constexpr int kRangeMaxM = 50;
 constexpr int kRangeStepM = 5;
@@ -606,19 +606,17 @@ void MainWindow::onDemoTick() {
     for (int i = -120; i <= 120; ++i) {
         const double az = i * 1.0;
         const double r = 2.5 + 21.0 * (i + 120) / 240.0
-                         + 1.2 * std::sin(3.0 * az * kPi / 180.0 + phase);
-        const double el = 32.0 * std::sin(2.0 * az * kPi / 180.0 + phase);
+                         + 1.2 * std::sin(3.0 * Coord::degToRad(az) + phase);
+        const double el = 32.0 * std::sin(2.0 * Coord::degToRad(az) + phase);
         const double snr = 60.0 + 90.0
-                           * std::fabs(std::sin(2.0 * az * kPi / 180.0));
-        const double elRad = el * kPi / 180.0;
-        double azRad = std::fmod((az - 180.0) * kPi / 180.0, 2.0 * kPi);
-        if (azRad < 0.0) {
-            azRad += 2.0 * kPi;
-        }
+                           * std::fabs(std::sin(2.0 * Coord::degToRad(az)));
+        const double elRad = Coord::degToRad(el);
+        const double azRad = Coord::degToRad(Coord::normalizeDeg(az - 180.0));
         // Synthesise wire words whose re-projection yields this demo point.
         RawPoint rp;
         rp.azRaw = quint16(std::lround(azRad * 1000.0));
-        rp.elRaw = quint16(std::lround((elRad + 2.0 * kPi) * 1000.0));
+        rp.elRaw = quint16(std::lround(
+            (elRad + Coord::kRawElevationWrapRad) * 1000.0));
         rp.rRaw = quint16(std::lround(r / std::cos(elRad) * 1000.0));
         rp.c3 = quint16(std::lround(snr + mCfg.minAmp));
         rp.c4 = 0;

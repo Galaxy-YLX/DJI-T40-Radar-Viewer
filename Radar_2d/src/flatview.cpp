@@ -1,5 +1,7 @@
 #include "flatview.h"
 
+#include "coords.h"
+
 #include <QColor>
 #include <QPaintEvent>
 #include <QPainter>
@@ -10,11 +12,10 @@
 
 namespace {
 // The unrolled forward sector: 240 -> 360/000 -> 120, i.e. +/-120 deg.
-constexpr double kAzStartDeg = 240.0;
-constexpr double kAzSpanDeg = 240.0;
-constexpr double kElTopDeg = 45.0;
-constexpr double kElBottomDeg = -45.0;
-constexpr double kElSpanDeg = kElTopDeg - kElBottomDeg;   // 90 deg
+// Aliases keep the drawing code terse while Coord.h owns the actual values.
+constexpr double kAzSpanDeg = Coord::kUnrolledSpanDeg;
+constexpr double kElTopDeg = Coord::kElevTopDeg;
+constexpr double kElBottomDeg = Coord::kElevBottomDeg;
 constexpr int kBins = 12;              // discrete distance colour steps
 
 constexpr double kLeft = 58.0;
@@ -97,11 +98,8 @@ QColor FlatView::rangeColor(double t) {
 }
 
 double FlatView::unrolledAz(double azDeg) {
-    double a = std::fmod(azDeg - kAzStartDeg, 360.0);
-    if (a < 0.0) {
-        a += 360.0;
-    }
-    return a;   // 0..240 is the forward sector; >240 is the rear blind wedge
+    // 0..240 is the forward sector; >240 is the rear blind wedge.
+    return Coord::unrolledAz(azDeg);
 }
 
 void FlatView::paintEvent(QPaintEvent *) {
@@ -125,7 +123,8 @@ void FlatView::paintEvent(QPaintEvent *) {
 void FlatView::drawGrid(QPainter &p, const QRectF &plot) const {
     p.save();
     for (int a = 0; a <= int(kAzSpanDeg); a += 10) {
-        const double x = plot.left() + a / kAzSpanDeg * plot.width();
+        const double x = Coord::flatXFromUnrolledAz(
+            a, plot.left(), plot.width(), false);
         const bool zero = (a == 120);   // 000 deg, straight ahead
         p.setPen(QPen(zero ? kGridZero
                            : (a % 30 == 0 ? kGridMajor : kGridMinor),
@@ -133,8 +132,8 @@ void FlatView::drawGrid(QPainter &p, const QRectF &plot) const {
         p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()));
     }
     for (int e = -45; e <= 45; e += 5) {
-        const double y = plot.top()
-                         + (kElTopDeg - e) / kElSpanDeg * plot.height();
+        const double y = Coord::flatYFromElevation(
+            e, plot.top(), plot.height());
         const bool zero = (e == 0);     // horizon
         p.setPen(QPen(zero ? kGridZero
                            : (e % 15 == 0 ? kGridMajor : kGridMinor),
@@ -161,20 +160,17 @@ void FlatView::drawPoints(QPainter &p, const QRectF &plot) {
             ++mOutOfFov;   // outside the +/-45 deg elevation window
             continue;
         }
-        double a = unrolledAz(pt.azimuthDeg);
-        if (a < 0.0 || a > kAzSpanDeg) {
+        const double a = unrolledAz(pt.azimuthDeg);
+        if (a > kAzSpanDeg) {
             continue;      // rear no-data sector
         }
-        // The 240 -> 120 scale stays in place; mirror the blips alone when
-        // the PPI mirrors its returns, so a target lands on the same side
-        // of both views (about the centre 000 line).
-        if (mFlipLeftRight) {
-            a = kAzSpanDeg - a;
-        }
-        const double x = plot.left() + a / kAzSpanDeg * plot.width();
-        const double y = plot.top()
-                         + (kElTopDeg - pt.elevationDeg) / kElSpanDeg
-                         * plot.height();
+        // The 240 -> 120 scale stays in place; the shared helper mirrors the
+        // blips alone when the PPI mirrors its returns, so a target lands on
+        // the same side of both views (about the centre 000 line).
+        const double x = Coord::flatXFromUnrolledAz(
+            a, plot.left(), plot.width(), mFlipLeftRight);
+        const double y = Coord::flatYFromElevation(
+            pt.elevationDeg, plot.top(), plot.height());
         const double t = std::isfinite(pt.rangeM)
             ? std::clamp(double(pt.rangeM) / mRangeLimit, 0.0, 1.0)
             : 1.0;
@@ -192,7 +188,8 @@ void FlatView::drawAzimuthScale(QPainter &p, const QRectF &plot) const {
     small.setPointSizeF(8.0);
     for (int i = 0; i < kAzLabelCount; ++i) {
         const double a = i * 30.0;
-        const double x = plot.left() + a / kAzSpanDeg * plot.width();
+        const double x = Coord::flatXFromUnrolledAz(
+            a, plot.left(), plot.width(), false);
         const bool centre = (kAzLabels[i] == 0);
         p.setPen(QPen(centre ? kGridZero : kGridMajor, 1.0));
         p.drawLine(QPointF(x, plot.top() - 6.0), QPointF(x, plot.top()));
@@ -211,8 +208,8 @@ void FlatView::drawElevationScale(QPainter &p, const QRectF &plot) const {
     small.setPointSizeF(8.0);
     p.setFont(small);
     for (int e : kElLabels) {
-        const double y = plot.top()
-                         + (kElTopDeg - e) / kElSpanDeg * plot.height();
+        const double y = Coord::flatYFromElevation(
+            e, plot.top(), plot.height());
         p.setPen(QPen(e == 0 ? kGridZero : kGridMajor, 1.0));
         p.drawLine(QPointF(plot.left() - 5.0, y), QPointF(plot.left(), y));
         p.setPen(e == 0 ? kText : kTextDim);

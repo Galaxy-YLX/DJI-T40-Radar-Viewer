@@ -10,6 +10,7 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 add_executable(radar2d
     src/main.cpp
     src/config.h
+    src/coords.h
     src/sidestream.h
     src/sidestream.cpp
     src/f0decoder.h
