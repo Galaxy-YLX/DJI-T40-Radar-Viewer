@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QHash>
 #include <QLabel>
 #include <QPalette>
 #include <QProcess>
@@ -28,6 +29,9 @@ constexpr int kRangeStepM = 5;
 constexpr double kSpeedGateMinMps = 0.0;
 constexpr double kSpeedGateMaxMps = 20.0;
 constexpr double kSpeedGateStepMps = 1.0;
+constexpr int kMinAmpMin = 0;
+constexpr int kMinAmpMax = 300;
+constexpr int kMinAmpStep = 5;
 constexpr int kFpsWindowMs = 2000;  // sliding window for the instant frame rate
 constexpr int kFpsStaleMs = 500;    // no frame this long -> 0 Hz
 constexpr int kHudRefreshMs = 200;  // status text refresh, decoupled from frames
@@ -46,9 +50,9 @@ constexpr const char *kToolBarStyle =
     "QToolBar QPushButton:pressed { background-color: #0b3d20; }"
     "QToolBar QPushButton:disabled { color: #0b5c2c;"
     " border-color: #062d16; }"
-    // The +/- range and speed-gate buttons keep the compact 14px design.
-    "QPushButton#rangeButton, QPushButton#speedGateButton {"
-    " font-size: 14px; padding: 0px; }";
+    // The +/- range, speed-gate and min-amp buttons keep the compact 14px design.
+    "QPushButton#rangeButton, QPushButton#speedGateButton,"
+    " QPushButton#minAmpButton { font-size: 14px; padding: 0px; }";
 }
 
 namespace {
@@ -98,6 +102,8 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mHud.rangeM = cfg.rangeM;
     mSpeedGateMps = std::clamp(cfg.speedGateMps,
                                kSpeedGateMinMps, kSpeedGateMaxMps);
+    mMinAmp = std::clamp(cfg.minAmp, kMinAmpMin, kMinAmpMax);
+    mMeta.minAmp = mMinAmp;
     mHud.speedGateMps = mSpeedGateMps;
     mHud.source = cfg.demo ? QStringLiteral("演示") : QStringLiteral("00F0/UDP");
     mHud.mode = QStringLiteral("实时");
@@ -209,6 +215,36 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mSpeedGateMinus->setFocusPolicy(Qt::NoFocus);
     speedBar->addWidget(mSpeedGateMinus);
 
+    // The echo-amplitude threshold sits directly under the speed gate, with
+    // the same row rhythm. A point is shown only when its 0x00F0 c3 >= minAmp.
+    addToolBarBreak(Qt::TopToolBarArea);
+    auto *ampBar = makeBar("幅度门");
+
+    auto *minAmpLabel = new QLabel("幅度门", ampBar);
+    ampBar->addWidget(minAmpLabel);
+    mMinAmpValue = new QLabel(ampBar);
+    mMinAmpValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    mMinAmpValue->setMinimumWidth(40);
+    mMinAmpValue->setStyleSheet("font-size: 15px; font-weight: bold;");
+    mMinAmpValue->setToolTip(
+        "回波幅度阈值（+ / - 按钮调整，c3）：隐藏 c3 低于该值的回波");
+    ampBar->addWidget(mMinAmpValue);
+    auto *minAmpUnit = new QLabel("c3", ampBar);
+    minAmpUnit->setStyleSheet("margin-left: 4px; margin-right: 4px;");
+    ampBar->addWidget(minAmpUnit);
+
+    mMinAmpPlus = new QPushButton("+", ampBar);
+    mMinAmpPlus->setObjectName("minAmpButton");
+    mMinAmpPlus->setToolTip("幅度门 +5");
+    mMinAmpPlus->setFocusPolicy(Qt::NoFocus);
+    ampBar->addWidget(mMinAmpPlus);
+
+    mMinAmpMinus = new QPushButton("−", ampBar);
+    mMinAmpMinus->setObjectName("minAmpButton");
+    mMinAmpMinus->setToolTip("幅度门 -5");
+    mMinAmpMinus->setFocusPolicy(Qt::NoFocus);
+    ampBar->addWidget(mMinAmpMinus);
+
     // Recording and replay have no toolbar row; they are driven purely by
     // --record / --replay / --speed / --loop on the command line.
 
@@ -236,6 +272,7 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     mPpi->setRangeLimit(cfg.rangeM);
     syncRangeDisplay(mPpi->rangeLimit());
     syncSpeedGateDisplay(mSpeedGateMps);
+    syncMinAmpDisplay(mMinAmp);
 
     connect(mRangePlus, &QPushButton::clicked, this, [this] {
         mPpi->setRangeLimit(mPpi->rangeLimit() + kRangeStepM);
@@ -248,6 +285,12 @@ MainWindow::MainWindow(const Config &cfg, QWidget *parent)
     });
     connect(mSpeedGateMinus, &QPushButton::clicked, this, [this] {
         setSpeedGate(mSpeedGateMps - kSpeedGateStepMps);
+    });
+    connect(mMinAmpPlus, &QPushButton::clicked, this, [this] {
+        setMinAmp(mMinAmp + kMinAmpStep);
+    });
+    connect(mMinAmpMinus, &QPushButton::clicked, this, [this] {
+        setMinAmp(mMinAmp - kMinAmpStep);
     });
     connect(mPpi, &PpiWidget::rangeChanged, this,
             &MainWindow::syncRangeDisplay);
@@ -407,9 +450,48 @@ void MainWindow::syncSpeedGateDisplay(double mps) {
     mSpeedGatePlus->setEnabled(mps < kSpeedGateMaxMps - 0.05);
 }
 
+void MainWindow::setMinAmp(int n) {
+    const int next = std::clamp(n, kMinAmpMin, kMinAmpMax);
+    if (next == mMinAmp) {
+        return;
+    }
+    mMinAmp = next;
+    syncMinAmpDisplay(next);
+    // Re-project the retained raw points so the new threshold takes effect
+    // on screen without waiting for the next UDP datagram. Carry speeds over
+    // by wire identity so an open speed gate does not blank this one frame;
+    // the next real frame re-estimates them from the tracker's history.
+    if (mLastFrame.valid) {
+        QHash<quint64, float> speedByWire;
+        speedByWire.reserve(mLastFrame.points.size());
+        for (const SectorPoint &pt : mLastFrame.points) {
+            const quint64 key = (quint64(pt.azRaw) << 16) | pt.c5Us;
+            speedByWire.insert(key, pt.speedMps);
+        }
+        F0::projectRaw(mLastFrame.rawPoints, mLastFrame, float(mOffsetDeg),
+                       mMinAmp, mCfg.minRangeM);
+        for (SectorPoint &pt : mLastFrame.points) {
+            const quint64 key = (quint64(pt.azRaw) << 16) | pt.c5Us;
+            pt.speedMps = speedByWire.value(key, 0.0f);
+        }
+    }
+    refreshFrameDisplay();
+}
+
+void MainWindow::syncMinAmpDisplay(int n) {
+    mMinAmpValue->setText(QString::number(n));
+    mMinAmpMinus->setEnabled(n > kMinAmpMin);
+    mMinAmpPlus->setEnabled(n < kMinAmpMax);
+}
+
 // Single display entry point: live UDP and file replay both reach the PPI
 // and the unrolled view through here, with identical frame objects.
 void MainWindow::applyFrame(const SideFrame &fr) {
+    // Re-project with the live threshold so an on-screen min-amp change also
+    // applies to the frames that keep arriving from any source.
+    SideFrame projected = fr;
+    F0::projectRaw(fr.rawPoints, projected, float(mOffsetDeg), mMinAmp,
+                   mCfg.minRangeM);
     mHud.token = int(fr.frameToken);
     mHud.entries = int(fr.entryCount);
     mHud.sumOk = fr.sumOk;
@@ -424,7 +506,7 @@ void MainWindow::applyFrame(const SideFrame &fr) {
 
     // Estimate speeds on the full point set; gating must not change what the
     // estimator associates on following frames.
-    mLastFrame = fr;
+    mLastFrame = projected;
     mVelocity.estimate(mLastFrame);
     refreshFrameDisplay();
 }

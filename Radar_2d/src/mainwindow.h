@@ -41,6 +41,8 @@ private:
     void syncRangeDisplay(double m);
     void setSpeedGate(double mps);
     void syncSpeedGateDisplay(double mps);
+    void setMinAmp(int n);
+    void syncMinAmpDisplay(int n);
     void startRadar();
     void stopRadar();
     void setPowerRunning(bool running);
@@ -58,6 +60,9 @@ private:
     QLabel *mSpeedGateValue = nullptr;
     QPushButton *mSpeedGatePlus = nullptr;
     QPushButton *mSpeedGateMinus = nullptr;
+    QLabel *mMinAmpValue = nullptr;
+    QPushButton *mMinAmpPlus = nullptr;
+    QPushButton *mMinAmpMinus = nullptr;
     QPushButton *mPowerOn = nullptr;
     QPushButton *mPowerOff = nullptr;
 
@@ -85,4 +90,5 @@ private:
     qint64 mDemoLastUs = 0;
     double mOffsetDeg;
     double mSpeedGateMps = 0.0;
+    int mMinAmp = 80;
 };
