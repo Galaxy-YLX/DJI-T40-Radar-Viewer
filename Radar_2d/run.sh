@@ -21,6 +21,10 @@
 #   RADAR_IP (192.168.8.2)  CAN_IFACE (can0)  MIN_AMP (80)
 #   RANGE (25)  POINT_SIZE (0.5)  AZIMUTH_OFFSET (0)  MIN_RANGE (0)
 #   FLIP (1)  — 1 mirrors the point cloud left-right, 0 disables the mirror
+#   STATUS_SHOW (1)  startup status panel; STATUS_SHOW=0 disables it
+#   STATUS_LISTEN (1.0)  seconds of passive CAN traffic listening
+#   CAN_PROBE (0)  set 1 to send a 0x1E/F9 request and wait for the ESC echo
+#   RADAR_SSH_PORT (107)  radar port used for reachability check
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -34,6 +38,10 @@ POINT_SIZE="${POINT_SIZE:-0.5}"
 AZIMUTH_OFFSET="${AZIMUTH_OFFSET:-0}"
 MIN_RANGE="${MIN_RANGE:-0}"
 FLIP="${FLIP:-1}"
+STATUS_SHOW="${STATUS_SHOW:-1}"
+STATUS_LISTEN="${STATUS_LISTEN:-1.0}"
+CAN_PROBE="${CAN_PROBE:-0}"
+RADAR_SSH_PORT="${RADAR_SSH_PORT:-107}"
 
 # Optional --no-flip only when FLIP=0 (the viewer flips by default).
 FLIP_ARGS=()
@@ -86,6 +94,23 @@ ensure_env() {
     echo "[env] environment configured"
 }
 
+# ── Startup status panel ────────────────────────────────────────────────
+show_status() {
+    [ "$STATUS_SHOW" = "1" ] || return 0
+    local script="$ROOT/radar_client/link_status.py"
+    [ -f "$script" ] || return 0
+
+    echo "[status] $(date '+%F %T') mode=$MODE binary=$BIN"
+    echo "[status] radar=$RADAR_IP can=$CAN_IFACE range=${RANGE}m min_amp=$MIN_AMP flip=$FLIP"
+    local probe_arg=()
+    if [ "$CAN_PROBE" = "1" ]; then
+        probe_arg=(--probe)
+    fi
+    python3 "$script" --iface "$CAN_IFACE" --host-ip 192.168.8.1 \
+        --radar-ip "$RADAR_IP" --ssh-port "$RADAR_SSH_PORT" \
+        --listen "$STATUS_LISTEN" "${probe_arg[@]}" || true
+}
+
 # Build once if the binary is missing.
 if [ ! -x "$BIN" ]; then
     echo "[run] building radar2d ..."
@@ -122,6 +147,7 @@ case "$MODE" in
   record)
     [ "$#" -ge 2 ] || { echo "usage: $0 record <file.jsonl> [args...]" >&2; exit 1; }
     ensure_env
+    show_status
     FILE="$2"
     shift 2
     echo "[run] live UDP + recording to $FILE ..."
@@ -129,6 +155,7 @@ case "$MODE" in
     ;;
   dump)
     ensure_env
+    show_status
     echo "[run] starting FC client (can-bridge $CAN_IFACE, no v2 listen) ..."
     python3 "$ROOT/radar_client/radar_min_client.py" \
         --can-bridge "$CAN_IFACE" --radar-ip "$RADAR_IP" --no-v2-listen \
@@ -139,6 +166,7 @@ case "$MODE" in
     ;;
   udp)
     ensure_env
+    show_status
     # The viewer's 开机 / 关机 buttons own the FC client; starting it here
     # as well would fight over UDP 50007.
     echo "[run] launching 2D viewer from radar UDP (press 开机 to start the radar) ..."
