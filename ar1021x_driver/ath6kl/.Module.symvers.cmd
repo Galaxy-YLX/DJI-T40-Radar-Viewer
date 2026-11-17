@@ -1,1 +1,1 @@
-savedcmd_Module.symvers :=  /usr/src/kernels/7.2.15-1.surface.fc43.x86_64/scripts/mod/modpost -M          -o Module.symvers -n -T modules.order -i /usr/src/kernels/7.2.15-1.surface.fc43.x86_64/Module.symvers -e 
+savedcmd_Module.symvers :=  /usr/src/kernels/7.3.4-1.surface.fc43.x86_64/scripts/mod/modpost -M          -o Module.symvers -n -T modules.order -i /usr/src/kernels/7.3.4-1.surface.fc43.x86_64/Module.symvers -e 

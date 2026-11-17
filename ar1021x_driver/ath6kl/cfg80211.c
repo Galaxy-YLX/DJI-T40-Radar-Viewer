@@ -21,6 +21,7 @@
 #include <linux/inetdevice.h>
 #include <linux/export.h>
 #include <linux/sched/signal.h>
+#include <linux/version.h>
 
 #include "core.h"
 #include "cfg80211.h"
@@ -3033,7 +3034,11 @@ static int ath6kl_remain_on_channel(struct wiphy *wiphy,
 				    struct wireless_dev *wdev,
 				    struct ieee80211_channel *chan,
 				    unsigned int duration,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+				    u64 cookie, const u8 *rx_addr)
+#else
 				    u64 *cookie, const u8 *rx_addr)
+#endif
 {
 	struct ath6kl_vif *vif = ath6kl_vif_from_wdev(wdev);
 	struct ath6kl *ar = ath6kl_priv(vif->ndev);
@@ -3046,7 +3051,13 @@ static int ath6kl_remain_on_channel(struct wiphy *wiphy,
 		/* Do not use 0 as the cookie value */
 		id = ++vif->last_roc_id;
 	}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+	/* Newer cfg80211 allocates the cookie itself; use it so the
+	 * ready/expired events carry the value user space expects. */
+	vif->last_roc_id = cookie ? (u32)cookie : id;
+#else
 	*cookie = id;
+#endif
 
 	return ath6kl_wmi_remain_on_chnl_cmd(ar->wmi, vif->fw_vif_idx,
 					     chan->center_freq, duration);
@@ -3189,7 +3200,12 @@ static bool ath6kl_is_p2p_go_ssid(const u8 *buf, size_t len)
 }
 
 static int ath6kl_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
-			  struct cfg80211_mgmt_tx_params *params, u64 *cookie)
+			  struct cfg80211_mgmt_tx_params *params,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
+			  u64 cookie)
+#else
+			  u64 *cookie)
+#endif
 {
 	struct ath6kl_vif *vif = ath6kl_vif_from_wdev(wdev);
 	struct ath6kl *ar = ath6kl_priv(vif->ndev);
@@ -3221,7 +3237,11 @@ static int ath6kl_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
 		 * Send Probe Response frame in GO mode using a separate WMI
 		 * command to allow the target to fill in the generic IEs.
 		 */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0)
 		*cookie = 0; /* TX status not supported */
+#else
+		(void)cookie; /* TX status not supported */
+#endif
 		return ath6kl_send_go_probe_resp(vif, buf, len, freq);
 	}
 
@@ -3234,7 +3254,11 @@ static int ath6kl_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
 		id = vif->send_action_id++;
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0)
 	*cookie = id;
+#else
+	(void)cookie;
+#endif
 
 	/* AP mode Power saving processing */
 	if (vif->nw_type == AP_NETWORK) {
