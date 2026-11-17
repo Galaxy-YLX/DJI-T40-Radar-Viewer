@@ -125,7 +125,7 @@ struct SideFrame {
 第一行 meta，后续每行一帧：
 
 ```json
-{"type":"meta","version":1,"cfg":{"minAmp":80,"minRangeM":0,"offsetDeg":0,"rangeM":25,"flipLeftRight":true,"source":"demo"},"start_wall_ms":1794725519044}
+{"type":"meta","version":1,"cfg":{"minAmp":0,"minRangeM":0,"offsetDeg":0,"rangeM":25,"flipLeftRight":true,"source":"demo"},"start_wall_ms":1794725519044}
 {"type":"frame","i":0,"token":12345,"ts_us":...,"wall_ms":...,"dt_ms":49.8,"rpm":1201.4,"rev_us":49958.0,"sum_ok":1,"raw":[[az,el,r,c3,c4,c5],...]}
 ```
 

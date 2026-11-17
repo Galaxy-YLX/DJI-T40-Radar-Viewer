@@ -9,7 +9,7 @@ struct Config {
     quint16 port = 40204;           // radar perception stream UDP port
     double rangeM = 25.0;           // scope range limit (m)
     double offsetDeg = 0.0;         // azimuth rotation (forward -> top, deg)
-    int minAmp = 80;                // 0x00F0: drop points with c3 below this
+    int minAmp = 0;                 // 0x00F0: drop points with c3 below this
     float minRangeM = 0.0f;         // drop detections closer than this (m)
     double speedGateMps = 0.0;      // speed gate threshold (m/s, 0 = off)
     double pointRadius = 0.5;       // blip radius (px)

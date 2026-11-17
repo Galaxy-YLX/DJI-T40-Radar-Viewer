@@ -18,7 +18,7 @@
 # Set AUTO_SETUP=0 to only check (and fail with a hint) instead of running sudo.
 #
 # Environment overrides:
-#   RADAR_IP (192.168.8.2)  CAN_IFACE (can0)  MIN_AMP (80)
+#   RADAR_IP (192.168.8.2)  CAN_IFACE (can0)  MIN_AMP (0)
 #   RANGE (25)  POINT_SIZE (0.5)  AZIMUTH_OFFSET (0)  MIN_RANGE (0)
 #   FLIP (1)  — 1 mirrors the point cloud left-right, 0 disables the mirror
 #   STATUS_SHOW (1)  startup status panel; STATUS_SHOW=0 disables it
@@ -33,7 +33,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN=build/radar2d
 RADAR_IP="${RADAR_IP:-192.168.8.2}"
 CAN_IFACE="${CAN_IFACE:-can0}"
-MIN_AMP="${MIN_AMP:-80}"
+MIN_AMP="${MIN_AMP:-0}"
 RANGE="${RANGE:-25}"
 POINT_SIZE="${POINT_SIZE:-0.5}"
 AZIMUTH_OFFSET="${AZIMUTH_OFFSET:-0}"

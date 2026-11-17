@@ -30,7 +30,7 @@ static Config parseConfig(const QCoreApplication &app) {
         {"range", "scope range limit in metres", "m", "25"},
         {"azimuth-offset", "azimuth rotation in degrees (forward -> top)", "deg",
          "0"},
-        {"min-amp", "0x00F0: drop points with c3 below this", "n", "80"},
+        {"min-amp", "0x00F0: drop points with c3 below this", "n", "0"},
         {"min-range", "drop detections closer than this (m)", "m", "0"},
         {"speed-gate", "speed gate threshold in m/s (0 = off)", "m/s", "0"},
         {"point-size", "blip radius in pixels", "px", "0.5"},

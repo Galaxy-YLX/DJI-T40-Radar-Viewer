@@ -17,7 +17,7 @@
 // line so an offline replay can be projected under different settings.
 struct FrameMeta {
     double offsetDeg = 0.0;
-    int minAmp = 80;
+    int minAmp = 0;
     float minRangeM = 0.0f;
     double rangeM = 25.0;
     bool flipLeftRight = true;

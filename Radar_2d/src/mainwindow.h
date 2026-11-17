@@ -90,5 +90,5 @@ private:
     qint64 mDemoLastUs = 0;
     double mOffsetDeg;
     double mSpeedGateMps = 0.0;
-    int mMinAmp = 80;
+    int mMinAmp = 0;
 };
