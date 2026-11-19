@@ -125,10 +125,11 @@ void FlatView::drawGrid(QPainter &p, const QRectF &plot) const {
     for (int a = 0; a <= int(kAzSpanDeg); a += 10) {
         const double x = Coord::flatXFromUnrolledAz(
             a, plot.left(), plot.width(), false);
-        const bool zero = (a == 120);   // 000 deg, straight ahead
-        p.setPen(QPen(zero ? kGridZero
-                           : (a % 30 == 0 ? kGridMajor : kGridMinor),
-                      zero ? 1.6 : 1.0));
+        // Cardinal azimuths: 270 / 000 / 090 at unrolled 30 / 120 / 210.
+        const bool cardinal = (a == 30 || a == 120 || a == 210);
+        p.setPen(QPen(cardinal ? kGridZero
+                               : (a % 30 == 0 ? kGridMajor : kGridMinor),
+                      cardinal ? 1.6 : 1.0));
         p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()));
     }
     for (int e = -45; e <= 45; e += 5) {
@@ -190,12 +191,14 @@ void FlatView::drawAzimuthScale(QPainter &p, const QRectF &plot) const {
         const double a = i * 30.0;
         const double x = Coord::flatXFromUnrolledAz(
             a, plot.left(), plot.width(), false);
-        const bool centre = (kAzLabels[i] == 0);
-        p.setPen(QPen(centre ? kGridZero : kGridMajor, 1.0));
+        const bool cardinal = (kAzLabels[i] == 270 || kAzLabels[i] == 0
+                               || kAzLabels[i] == 90);
+        p.setPen(QPen(cardinal ? kGridZero : kGridMajor,
+                      cardinal ? 1.6 : 1.0));
         p.drawLine(QPointF(x, plot.top() - 6.0), QPointF(x, plot.top()));
         QFont labelFont = small;
-        labelFont.setBold(centre);
-        labelFont.setPointSizeF(centre ? 9.5 : 8.5);
+        labelFont.setBold(cardinal);
+        labelFont.setPointSizeF(cardinal ? 9.5 : 8.5);
         p.setFont(labelFont);
         p.setPen(kText);
         p.drawText(QRectF(x - 22.0, plot.top() - 26.0, 44.0, 18.0),
